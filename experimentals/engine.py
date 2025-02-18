@@ -1,5 +1,6 @@
 
-#CASO 1: Predicción de la demanda de prdouctos de una empresa, por meses
+#Este es el motor principal o "controlador"
+#Que permitirá realizar una interacción con los distintos componentes del sistema
 import pyodbc
 import pandas as pd
 import numpy as np
@@ -259,12 +260,9 @@ class engine:
             #Graficar los dataframes
             plt.plot(datos.index, datos['cantidad'],label='Historial 2015 - 2020')
             plt.plot(future_data.index, future_data['cantidad'],label='Predicción 2021 - 2022')
-
             plt.xlabel('Fecha')
             plt.ylabel('Cantidad de productos vendidos')
             plt.title('Predicción de la demanda global por meses para el 2021')
-
-
             plt.legend()
             plt.show()
             future_data
