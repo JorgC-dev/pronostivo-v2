@@ -11,15 +11,17 @@ from rich.__main__ import make_test_card
 
 console = Console()
 
-def wait_for_input():
-    console.print("[bold cyan]\nEscribe algo y presiona Enter para continuar...[/bold cyan]")
-    user_input = input()  # Espera la entrada de una cadena y la almacena
-    return user_input
+# def wait_for_input():
+#     console.print("[bold cyan]\nEscribe algo y presiona Enter para continuar...[/bold cyan]")
+#     user_input = input()  # Espera la entrada de una cadena y la almacena
+#     return user_input
 
 def initialyze():
     set_terminal_size(100, 0)
     console.clear()
     intro()
+
+def prepareConection(mode):
     if not os.path.exists('config.json'):
         settings()
     else: 
@@ -39,7 +41,16 @@ def initialyze():
                 driver = config[int(opcion)-1]['driver']
                 # console.print("[bold green]Inicializando...[/bold green]")
                 sqlServerConfig = setSQLServerConfig(server_name, database_name, driver)
-                connect_engine(sqlServerConfig)
+                engine, sql_serverConfig,query = check_engine(sqlServerConfig)
+                setMode(mode,engine,sql_serverConfig,query)
+
+
+def setMode(mode, engine, sql_serverConfig,query):
+    # print("pasaste aqui")
+    if mode == "Entrenar-Crear modelo":
+        engine.main()
+    if mode == "Hacer Predicciones":
+        showSettingsModel(engine,sql_serverConfig,query)
 
 def set_terminal_size(columns=80, rows=24):
     os.system(f'mode con: cols={columns} lines={rows}' if os.name == 'nt' else f'printf "\e[8;{rows};{columns}t"')
@@ -54,7 +65,7 @@ def setSQLServerConfig(server_name, database_name,driver):
     return config
 
 
-def connect_engine(sql_serverConfig):
+def check_engine(sql_serverConfig):
     console.print("[bold green]Conectando con la base de datos...[/bold green]")
     query = """
                     DECLARE @cols AS NVARCHAR(MAX)
@@ -89,11 +100,12 @@ def connect_engine(sql_serverConfig):
     obj = engine(sql_serverConfig, query)
     try: 
         obj.get_sqlconnection(sql_serverConfig)
-        showSettingsModel(obj,sql_serverConfig,query)
     except Exception as e:
         console.print("[bold red]¡Error![/bold red]")
         console.print(f"[bold red]Error: {e}[/bold red]")
         pass
+
+    return obj, sql_serverConfig, query
 
 
 
@@ -103,6 +115,37 @@ def intro():
                    "Es un sistema robusto, confiable y se adapta a sus necesidades. Esta CLI le guiará en el proceso de configuración inicial del sistema. "
                    "Gracias por usar nuestro sistema")
     console.print(Panel(description, title=title, expand=False))
+    console.print()
+    console.rule("[bold green] Por favor, indique lo que hará: [/]")
+    options = ["Hacer Predicciones","Entrenar-Crear modelo"]
+    options = [options.pop()] if not os.path.exists('./models') else options
+    for i, option in enumerate(options):
+        console.print(f"{str(i+1)} > {option}")
+    vseleccion = int(Prompt.ask(choices=[str(i) for i in range(1,len(options)+1)]))
+    vseleccion = options[vseleccion-1]
+    print(vseleccion)
+    #Cuando se Crea-entrenena modelos
+    if vseleccion == "Entrenar-Crear modelo": 
+        prepareConection(vseleccion)
+    #cuando se cargan y se hacen predicciones
+    if vseleccion == "Hacer Predicciones":
+        prepareConection(vseleccion)
+
+
+
+
+def checkAllDirectory():
+    result = False
+    try: 
+        if not os.path.exists("./models/"):
+            os.makedirs("./models")
+        if not os.path.exists("config.json"):
+            with open('config.json','w') as file:
+                pass
+        result = True
+    except Exception as e: 
+        result = False
+    return result
 
 
 def settings():
@@ -114,7 +157,8 @@ def settings():
     with open('config.json', 'w') as file:
             json.dump([{"server_name": server_name, "database_name": database_name,"driver":driver}], file)
     #verificamos que la carpeta de modelos exista
-    return server_name, database_name
+    prepareConection()
+    # return server_name, database_name
 
 def showDrivers():
     drivers_name = ["SQL Server", "MySQL", "PostgreSQL", "Oracle"]
@@ -138,21 +182,47 @@ def showMenu():
 
 #Menu models
 def showSettingsModel(obj,sql_serverConfig,query):
-    console.clear()
-    models = os.listdir('./models')
-    console.rule("[bold green]Gestión de modelos[/bold green]")
-    console.print("[bold green]Seleccione un modelo para hacer una acción[/bold green]")
-    table = Table(title="Modelos disponibles")
-    table.add_column("Opción", style="cyan")
-    table.add_column("Modelo", style="magenta")
-    for i, model in enumerate(models, 1):
-        table.add_row(str(i), model)
-    console.print(table)
-    model = Prompt.ask("[bold blue]•[/] Selecciona un modelo", choices=[str(i) for i in range(1, len(models)+1)])
-    console.clear()
-    console.print(f"[bold green]Modelo seleccionado: [/]"+f"""[bold orange]{models[int(model)-1]}[/]""")
-    model_path = f"./models/{models[int(model)-1]}"
-    obj.modelPredicFuncion(sql_serverConfig,query,12, model_path)
+    contiNue = True
+    path = './models'
+    while contiNue:
+        console.clear()
+        models_dir = os.listdir(path)
+        console.rule("[bold green]Gestión de modelos[/bold green]")
+        console.print("[bold green]Seleccione un modelo para hacer una acción[/bold green]")
+        console.print("*** Seleccione un modelo para hacer la predicción ***")
+        # console.print("** Los modelos se encuentran dentro de carpetas, selecione una ***")
+        table = Table(title="Modelos disponibles")
+        table.add_column("Opción", style="cyan")
+        table.add_column("Directorio", style="magenta")
+        # for i, dire in enumerate(models_dir, 1):
+        #     table.add_row(str(i), dire)
+        console.print(table)
+        # m_dir = Prompt.ask("[bold blue]•[/] Selecciona una ruta", choices=[str(i) for i in range(1, len(models_dir)+1)])
+        # #Reasignamos el valor de path
+        # path = path+"/"+models_dir[int(m_dir)-1]
+        # console.clear()
+        # #listamos los modelos
+        # models = os.listdir(path)
+        # console.rule("[bold green]Gestión de modelos[/bold green]")
+        # console.print("[bold green]Seleccione un modelo para hacer una acción[/bold green]")
+        # #Creamos la tabla donde se encuentran los modelos
+        # table = Table(title="Modelos disponibles")
+        # table.add_column("Opción", style="cyan")
+        # table.add_column("Modelo", style="magenta")
+        # for i, model in enumerate(models, 1):
+        #     model.strip()
+        #     if model == "trainedModel_dataPredict" or model == "reconstruredModel_dataPredict":
+        #         pass
+        #     else:
+        #         table.add_row(str(i), model)
+        # console.print(table)
+        # model = Prompt.ask("[bold blue]•[/] Selecciona un modelo", choices=[str(i) for i in range(1, len(models)+1)])
+        console.print(f"[bold green]Modelo seleccionado: [/]"+f"""[bold orange]{models[int(model)-1]}[/]""")
+        model_path = path+"/"+models[int(model)-1]
+        console.print("[bold cyan]Ruta -> [/]"+model_path)
+        contiNue = False
+        console.print("[bold green]Iniciando proceso de predicción[/] "+model_path)
+        obj.modelPredicFuncion(sql_serverConfig,query,12, model_path)
 
 
 
@@ -160,12 +230,10 @@ def main(salir = False):
 
     while salir == False:
         initialyze()
-        # showSettingsModel()
-        # showSettingsModel()
-        # showMenu()
         console.print("[bold cyan]\n¿Desea salir del programa?[/bold cyan]")
         keyboard1 = Prompt.ask("[bold cyan]Presione [bold red]S[/bold red] para salir o cualquier otra tecla para continuar[/bold cyan]")
-        if keyboard1 == "S":
+        if keyboard1 == "S" or keyboard1=="s":
+            console.clear()
             salir = True
         else:
             salir = False

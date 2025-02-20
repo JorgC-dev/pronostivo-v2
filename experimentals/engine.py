@@ -16,6 +16,8 @@ from keras.layers import Dense, Activation, Flatten
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.ensemble import IsolationForest
 import keyboard  # Necesario para detectar la tecla
+import shutil
+
 
 
 class engine:
@@ -149,7 +151,7 @@ class engine:
     def modelPredicFuncion(self,sqlServerConfig, query, pasos, model_path):
         reconstrured_model = self.reconstrured_modelFunc(model_path)
         future_date, future_data = self.prepareData(sqlServerConfig,query,pasos,reconstrured_model)
-        self.GraphicDataCreate(future_date, future_data)
+        self.GraphicDataCreate(future_date, future_data, model_path)
 
 
     def prepareData(self, sqlServerConfig, query, pasos, reconstrured_model):
@@ -181,23 +183,47 @@ class engine:
                 future_data[column]= inverted.astype(int)
             future_data = self.set_index_datetime(future_data)
 
-            new_data.index = pd.to_datetime(new_data.index)
+            dataPrepare.index = pd.to_datetime(dataPrepare.index)
             future_data.index = pd.to_datetime(future_data.index)
-            return new_data, future_data
+            return dataPrepare, future_data
         
-    def GraphicDataCreate(self,futureDate, futureData):
+    def GraphicDataCreate(self,datos, futureData, model_path):
+
+        #tomamos la ruta del modelo y eliminamos el nombre del modelo
+        path = os.path.dirname(model_path)
+
+        #ubicamos la carpeta de predicciones de modelos reconstruidos
+        path = path+'/reconstruredModel_dataPredict'
+
+        #Creamos una carpeta de dato entrenados con el modelo reconstruido
+        if not os.path.exists(path):
+            os.makedirs(path)
+        
+        #en el mismo directorio, creamos una carpeta 
+        path = path+'/'+datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        os.makedirs(path)
         #Graficar los dataframes
         #considerar almacenar la variable de la columna, ya que, el nombre de la misma puede cambiar
-        plt.plot(futureDate.index, futureDate['cantidad'],label='Historial 2015 - 2020')
-        plt.plot(futureData.index, futureData['cantidad'],label='Predicción 2021 - 2022')
-
-        plt.xlabel('Fecha')
-        plt.ylabel('Cantidad de productos vendidos')
-        plt.title('Predicción de la demanda global por meses para el 2021')
+        #Configuracion de las imagenes
+        plt.rcParams['figure.figsize' ] = (16, 9)
+        plt.style.use('fast')
 
 
-        plt.legend()
-        plt.show()
+        for i in range(len(datos.columns)):
+            data = datos[datos.columns[i]][:]
+            plt.plot(data.index, data,label='Historial 2015 - 2020')
+            plt.plot(futureData.index, futureData[futureData.columns[i]], label='Predicción 2021 - 2022')
+            xtics = data.index.union(futureData.index)[::8]
+            plt.xticks(xtics)
+            plt.xlabel('Fecha')
+            plt.ylabel('Ventas')
+            plt.title('Predicción de la demanda del {p0} para el año del 2021'.format(p0=datos.columns[i]))
+            plt.legend()
+            plt.figtext(0.01, 0.01, datetime.now().strftime('%Y-%m-%d_%H-%M-%S'), fontsize=10, color="gray")
+            name = path+'/GraphicalPrediction_on_'+str(datos.columns[i])+".jpg"
+            plt.savefig(name, dpi=300)
+            plt.close()  # Cerrar la figura
+            # plt.show()
 #
     def reorderData(self, scaler, values, data, pasos):
         ultimosDias = data[data.index[int(len(data)*0.70)]:]
@@ -225,13 +251,23 @@ class engine:
         with self.get_sqlconnection(self.sql_server) as cursor:
             datos = pd.read_sql_query(self.query, cursor)
             datos = self.set_index_datetime(datos)
+            # last_day = datetime.strptime(datos.index.max(), '%Y-%m') + relativedelta(month=1)
+            # print(last_day)
+            # future_days = [(last_day + timedelta(days=i)).strftime('%Y-%m-%d') for i in range(self.PASOS)]
+            # print(future_days)
+            # last_day = datos.index.max() + timedelta(days=1)
+            # future_days = [last_day + timedelta(days=i) for i in range(self.PASOS)]
             last_day = datetime.strptime(datos.index.max(), '%Y-%m' ) + relativedelta(months=1)
+            print(last_day)
             future_days = [last_day + relativedelta(months=i) for i in range(self.PASOS)]
+            print(future_days)
             for i in range(len(future_days)):
-                future_days[i] = str(future_days[i])[:7]
-            future_data = pd.DataFrame(future_days)
-            future_data.columns = ['fecha']
+                future_days[i] = str(future_days[i])[:10]
+            # future_data = pd.DataFrame(future_days)
+            # future_data.columns = ['fecha']
+            future_data = pd.DataFrame(future_days, columns=['fecha'])
             model = self.crear_modeloFF()
+            dirmodels_name = './models/'+datetime.now().strftime('%Y-%m-%d')
             data = []
             for column in datos.columns:
                 data = datos.filter([column])
@@ -240,9 +276,10 @@ class engine:
                 x_train, y_train, x_val, y_val, scaler, values = self.create_x_y_train(data)
                 model, x_test = self.entrenar_modelo(x_train, y_train, x_val, y_val, scaler, values, data, model)
                 # Parte nueva para guardar los modelos
-                if not os.path.exists('./models'):
-                    os.makedirs('./models', exist_ok=True)
-                model.save('./models/model-training'+datetime.now().strftime('%Y-%m-%d')+'.keras')
+                model_name = dirmodels_name+"/"+"model-training"+datetime.now().strftime('%Y-%m-%d')+'.keras'
+                if not os.path.exists(dirmodels_name):
+                    os.makedirs(dirmodels_name, exist_ok=True)
+                model.save(model_name)
                 results = []
                 for i in range(self.PASOS):
                     parcial = model.predict(x_test)
@@ -257,14 +294,36 @@ class engine:
             datos.index = pd.to_datetime(datos.index)
             future_data.index = pd.to_datetime(future_data.index)
 
+            #ponemos un directorio
+            path = dirmodels_name+"/trainedModel_dataPredict/"
+            if os.path.exists(path):
+                shutil.rmtree(path)
+                os.makedirs(path)
+            else:
+                os.makedirs(path)
+            
+            #Configuracion de las imagenes
+            plt.rcParams['figure.figsize' ] = (16, 9)
+            plt.style.use('fast')
+
             #Graficar los dataframes
-            plt.plot(datos.index, datos['cantidad'],label='Historial 2015 - 2020')
-            plt.plot(future_data.index, future_data['cantidad'],label='Predicción 2021 - 2022')
-            plt.xlabel('Fecha')
-            plt.ylabel('Cantidad de productos vendidos')
-            plt.title('Predicción de la demanda global por meses para el 2021')
-            plt.legend()
-            plt.show()
-            future_data
+            for i in range(len(datos.columns)):
+                data = datos[datos.columns[i]][:]
+                #Para asignar los valores de los años a los que está sujeto el proyecto se debe guardar en una
+                #variable global y luego 
+                plt.plot(data.index, data,label='Historial 2015 - 2020')
+                plt.plot(future_data.index, future_data[future_data.columns[i]], label='Predicción 2021 - 2022')
+                xtics = data.index.union(future_data.index)[::8]
+
+                plt.xticks(xtics)
+                plt.xlabel('Fecha')
+                plt.ylabel('Ventas')
+                plt.title('Predicción de la demanda del {p0} para el año del 2021'.format(p0=datos.columns[i]))
+
+                plt.legend()
+                name = path+'GraphicalPrediction_on_'+str(datos.columns[i])+".jpg"
+                plt.savefig(name, dpi=300)
+                plt.close()  # Cerrar la figura para liberar memoria
+    
 
 
