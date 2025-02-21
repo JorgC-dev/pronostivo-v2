@@ -43,6 +43,8 @@ def prepareConection(mode):
                 sqlServerConfig = setSQLServerConfig(server_name, database_name, driver)
                 engine, sql_serverConfig,query = check_engine(sqlServerConfig)
                 setMode(mode,engine,sql_serverConfig,query)
+                console.print("[bold green]:heavy_check_mark: Proceso terminado con éxito")
+                console.print("[bold green]:heavy_check_mark: Modelo guardado correctamente")
 
 
 def setMode(mode, engine, sql_serverConfig,query):
@@ -188,41 +190,35 @@ def showSettingsModel(obj,sql_serverConfig,query):
         console.clear()
         models_dir = os.listdir(path)
         console.rule("[bold green]Gestión de modelos[/bold green]")
-        console.print("[bold green]Seleccione un modelo para hacer una acción[/bold green]")
+        console.print("[bold green]A continuación se presenta una tabla con los modelos disponibles[/bold green]")
         console.print("*** Seleccione un modelo para hacer la predicción ***")
         # console.print("** Los modelos se encuentran dentro de carpetas, selecione una ***")
         table = Table(title="Modelos disponibles")
         table.add_column("Opción", style="cyan")
-        table.add_column("Directorio", style="magenta")
-        # for i, dire in enumerate(models_dir, 1):
-        #     table.add_row(str(i), dire)
+        table.add_column("Modelo", style="magenta")
+        table.add_column("Fecha de entrenamiento", style="yellow")
+
+        #Funcion para listar todos los modelos
+        models_name = []
+        models_path = []
+        for ruta_actual, subdirectorio, archivos in os.walk(path):
+            for archivo in archivos:
+                if archivo.endswith('.keras'):
+                    models_path_join = os.path.join(ruta_actual, archivo)
+                    models_path.append(models_path_join)
+                    models_name.append(archivo)
+
+        for i, model in enumerate(models_name,1):
+            table.add_row(str(i),str(model),"Proximamente")
         console.print(table)
-        # m_dir = Prompt.ask("[bold blue]•[/] Selecciona una ruta", choices=[str(i) for i in range(1, len(models_dir)+1)])
-        # #Reasignamos el valor de path
-        # path = path+"/"+models_dir[int(m_dir)-1]
-        # console.clear()
-        # #listamos los modelos
-        # models = os.listdir(path)
-        # console.rule("[bold green]Gestión de modelos[/bold green]")
-        # console.print("[bold green]Seleccione un modelo para hacer una acción[/bold green]")
-        # #Creamos la tabla donde se encuentran los modelos
-        # table = Table(title="Modelos disponibles")
-        # table.add_column("Opción", style="cyan")
-        # table.add_column("Modelo", style="magenta")
-        # for i, model in enumerate(models, 1):
-        #     model.strip()
-        #     if model == "trainedModel_dataPredict" or model == "reconstruredModel_dataPredict":
-        #         pass
-        #     else:
-        #         table.add_row(str(i), model)
-        # console.print(table)
-        # model = Prompt.ask("[bold blue]•[/] Selecciona un modelo", choices=[str(i) for i in range(1, len(models)+1)])
-        console.print(f"[bold green]Modelo seleccionado: [/]"+f"""[bold orange]{models[int(model)-1]}[/]""")
-        model_path = path+"/"+models[int(model)-1]
+        model = Prompt.ask("[bold blue]•[/] Selecciona un modelo", choices=[str(i) for i in range(1, len(models_name)+1)])
+        console.print(f"[bold green]Modelo seleccionado: [/]"+f"""[bold orange]{models_name[int(model)-1]}[/]""")
+        model_path = models_path[int(model)-1]
         console.print("[bold cyan]Ruta -> [/]"+model_path)
         contiNue = False
         console.print("[bold green]Iniciando proceso de predicción[/] "+model_path)
         obj.modelPredicFuncion(sql_serverConfig,query,12, model_path)
+        console.print("[bold green] Proceso terminado con éxito [/]")
 
 
 

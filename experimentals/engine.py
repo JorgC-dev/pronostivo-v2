@@ -162,7 +162,7 @@ class engine:
             future_days = [last_day + relativedelta(months=i) for i in range(pasos)]
             for i in range(len(future_days)):
                 future_days[i] = str(future_days[i])[:7]
-            print("pasaste por aqui")
+            # print("pasaste por aqui")
             future_data = pd.DataFrame(future_days)
             #renombramiento del campo 
             future_data.columns = ['date']
@@ -171,7 +171,8 @@ class engine:
                 new_data.set_index(dataPrepare.index, inplace=True)
                 new_data = self.eliminar_anomalias(new_data)
                 x_train, y_train, x_val, y_val, scaler, values = self.create_x_y_train(new_data)
-                x_test = self.reorderData(scaler, values,new_data,pasos)
+                # x_test = self.reorderData(scaler, values,new_data,pasos)
+                reconstrured_model, x_test = self.entrenar_modelo(x_train,y_train,x_val,y_val,scaler,values,new_data,reconstrured_model)
                 results = []
                 for i in range(pasos):
                     parcial = reconstrured_model.predict(x_test)
@@ -219,13 +220,17 @@ class engine:
             plt.ylabel('Ventas')
             plt.title('Predicción de la demanda del {p0} para el año del 2021'.format(p0=datos.columns[i]))
             plt.legend()
-            plt.figtext(0.01, 0.01, datetime.now().strftime('%Y-%m-%d_%H-%M-%S'), fontsize=10, color="gray")
+            plt.figtext(0.01, 0.01, "Realizado el: "+datetime.now().strftime('%H:%M:%S %d-%m-%Y'), fontsize=10, color="gray")
+            plt.figtext(0.60, 0.01, "Gestión de Innovación en Tecnología Informática S.C.P | Grupo Consultores®", fontsize=10, color="gray")
             name = path+'/GraphicalPrediction_on_'+str(datos.columns[i])+".jpg"
             plt.savefig(name, dpi=300)
             plt.close()  # Cerrar la figura
             # plt.show()
 #
     def reorderData(self, scaler, values, data, pasos):
+        EPOCHS = 100
+        # model.fit(x_train, y_train, epochs=EPOCHS, validation_data=(x_val, y_val), batch_size=self.PASOS)
+        # model.predict(x_val)
         ultimosDias = data[data.index[int(len(data)*0.70)]:]
         values = ultimosDias.values
         values = values.astype('float32' )
@@ -268,18 +273,17 @@ class engine:
             future_data = pd.DataFrame(future_days, columns=['fecha'])
             model = self.crear_modeloFF()
             dirmodels_name = './models/'+datetime.now().strftime('%Y-%m-%d')
+            if not os.path.exists(dirmodels_name):
+                os.makedirs(dirmodels_name, exist_ok=True)
             data = []
-            for column in datos.columns:
+            total_col = len(datos.columns)
+            print("total de columnas"+str(total_col))
+            for i,column in enumerate(datos.columns):
                 data = datos.filter([column])
                 data.set_index(datos.index, inplace=True)
                 data = self.eliminar_anomalias(data)
                 x_train, y_train, x_val, y_val, scaler, values = self.create_x_y_train(data)
                 model, x_test = self.entrenar_modelo(x_train, y_train, x_val, y_val, scaler, values, data, model)
-                # Parte nueva para guardar los modelos
-                model_name = dirmodels_name+"/"+"model-training"+datetime.now().strftime('%Y-%m-%d')+'.keras'
-                if not os.path.exists(dirmodels_name):
-                    os.makedirs(dirmodels_name, exist_ok=True)
-                model.save(model_name)
                 results = []
                 for i in range(self.PASOS):
                     parcial = model.predict(x_test)
@@ -289,18 +293,20 @@ class engine:
                 inverted = scaler.inverse_transform(adimen)
                 y_pred = pd.DataFrame(inverted.astype(int))
                 future_data[column]= inverted.astype(int)
+            # Parte nueva para guardar los modelos
+            datetim_e = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+            model_path = dirmodels_name+"/model-training"+datetim_e
+            os.makedirs(model_path, exist_ok=True)
+            model_name = model_path+'/model_training-'+datetim_e+'.keras'
+            model.save(model_name)
             future_data = self.set_index_datetime(future_data)
 
             datos.index = pd.to_datetime(datos.index)
             future_data.index = pd.to_datetime(future_data.index)
 
-            #ponemos un directorio
-            path = dirmodels_name+"/trainedModel_dataPredict/"
-            if os.path.exists(path):
-                shutil.rmtree(path)
-                os.makedirs(path)
-            else:
-                os.makedirs(path)
+            #Creamos un directorio para guardar los datos del primer entrenamiento
+            path = model_path+"/trainedModel_dataPredict/"+datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+            os.makedirs(path)
             
             #Configuracion de las imagenes
             plt.rcParams['figure.figsize' ] = (16, 9)
@@ -319,9 +325,10 @@ class engine:
                 plt.xlabel('Fecha')
                 plt.ylabel('Ventas')
                 plt.title('Predicción de la demanda del {p0} para el año del 2021'.format(p0=datos.columns[i]))
-
                 plt.legend()
-                name = path+'GraphicalPrediction_on_'+str(datos.columns[i])+".jpg"
+                plt.figtext(0.01, 0.01, "Realizado el: "+datetime.now().strftime('%H:%M:%S %d-%m-%Y'), fontsize=10, color="gray")
+                plt.figtext(0.60, 0.01, "Gestión de Innovación en Tecnología Informática S.C.P | Grupo Consultores®", fontsize=10, color="gray")
+                name = path+'/GraphicalPrediction_on_'+str(datos.columns[i])+".jpg"
                 plt.savefig(name, dpi=300)
                 plt.close()  # Cerrar la figura para liberar memoria
     
