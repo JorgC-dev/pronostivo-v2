@@ -218,7 +218,7 @@ def showSettingsModel(obj,sql_serverConfig,query):
         contiNue = False
         console.print("[bold green]Iniciando proceso de predicción[/] "+model_path)
         obj.modelPredicFuncion(sql_serverConfig,query,12, model_path)
-        console.print("[bold green] Proceso terminado con éxito [/]")
+        # console.print("[bold green] Proceso terminado con éxito [/]")
 
 
 

@@ -100,7 +100,7 @@ class engine:
         model.summary()
         return model
 
-    def entrenar_modelo(self,x_train, y_train, x_val, y_val, scaler, values, data, model) :
+    def entrenar_modelo(self,x_train, y_train, x_val, y_val, scaler, values, data, model):
         EPOCHS = 100
         model.fit(x_train, y_train, epochs=EPOCHS, validation_data=(x_val, y_val), batch_size=self.PASOS)
         model.predict(x_val)
