@@ -13,15 +13,16 @@ from keras.models import Sequential
 #nuevo
 from keras.models import load_model
 from keras.layers import Dense, Activation, Flatten
+from keras.callbacks import EarlyStopping
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.ensemble import IsolationForest
 import keyboard  # Necesario para detectar la tecla
-import shutil
+import json
 
 
 
 class engine:
-    def __init__(self, sql_serverConfig,query,):
+    def __init__(self, sql_serverConfig,query):
         # self.server_name = server_name
         # self.database_name = database_name
         self.query = query
@@ -100,11 +101,59 @@ class engine:
         model.summary()
         return model
 
-    def entrenar_modelo(self,x_train, y_train, x_val, y_val, scaler, values, data, model):
-        EPOCHS = 100
-        model.fit(x_train, y_train, epochs=EPOCHS, validation_data=(x_val, y_val), batch_size=self.PASOS)
-        model.predict(x_val)
-        ultimosDias = data[data.index[int(len(data)*0.70)]:]
+    def entrenar_modelo(self,x_train, y_train, x_val, y_val, scaler, values, data, model,model_path):
+        EPOCHS = 150
+        early_stop = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+        history= model.fit(x_train, y_train, epochs=EPOCHS, validation_data=(x_val, y_val), batch_size=self.PASOS, callbacks=[early_stop])
+        results = model.predict(x_val)
+
+        #Preparamos el lugar para guardar las configuraciones del modelo
+        path = model_path+"/performance_model/"
+        os.makedirs(path)
+
+        #Configuracion de las imagenes
+        plt.rcParams['figure.figsize' ] = (16, 9)
+        plt.style.use('fast')
+
+        #Validacion 1: 
+        print(len(results))
+        plt.scatter(range(len(y_val)),y_val,c='g', label='Valores Reales')
+        plt.scatter(range(len(results)),results,c='r', label='Valores Predecidos')
+        plt.xlabel('Índice')
+        plt.ylabel('Valores(escalados)')
+        plt.title('Grafico de dispersión entre Valores reales vs Predecidos ')
+        plt.legend()
+        plt.figtext(0.01,0.01,"Realizado el: "+datetime.now().strftime('%H:%M:%S %d-%m-%Y'),fontsize=10,color="gray")
+        plt.figtext(0.60,0.01,"Gestión de Innovación en Tecnología Informática S.C.P. | Grupo Consultores®", fontsize=10, color="gray")
+        plt.savefig(path+"/performance_validation_1.jpg",dpi=300)
+        plt.close()
+
+        #Validacion 2: 
+        plt.plot(history.history['loss'],label='Pérdida de Entrenamiento')
+        plt.plot(history.history['val_loss'],label='Pérdida de Validación')
+        plt.xlabel('Épocas')
+        plt.ylabel('Pérdida')
+        plt.title('Grafico de Pérdidas de Entrenamiento y validación, según el # de Épocas')
+        plt.legend()
+        plt.figtext(0.01,0.01,"Realizado el: "+datetime.now().strftime('%H:%M:%S %d-%m-%Y'),fontsize=10,color="gray")
+        plt.figtext(0.60,0.01,"Gestión de Innovación en Tecnología Informática S.C.P. | Grupo Consultores®", fontsize=10, color="gray")
+        plt.savefig(path+"/performance_validation_2.jpg",dpi=300)
+        plt.close()
+
+        #Validacion 3: 
+        plt.title('Grafico de MSE de acuerdo al # de Épocas')
+        plt.plot(history.history['mse'],label='MSE de Entrenamiento')
+        plt.xlabel('Épocas')
+        plt.ylabel('MSE')
+        plt.legend()
+        plt.savefig(path+"/performance_validation_3.jpg",dpi=300)
+        plt.close()
+
+
+        #Guardamos la información en la metadata
+        self.saveMetadata()
+
+        ultimosDias = data[data.index[int(len(data)*0.80)]:]
         values = ultimosDias.values
         values = values.astype('float32' )
         values = values.reshape(-1, 1)
@@ -144,6 +193,7 @@ class engine:
     #Reconstruir el modelo
     def reconstrured_modelFunc(self,model_path):
         model = load_model(model_path)
+        model.summary()
         return model
     
 
@@ -161,7 +211,7 @@ class engine:
             last_day = datetime.strptime(dataPrepare.index.max(), '%Y-%m') + relativedelta(months=1)
             future_days = [last_day + relativedelta(months=i) for i in range(pasos)]
             for i in range(len(future_days)):
-                future_days[i] = str(future_days[i])[:7]
+                future_days[i] = str(future_days[i])[:10]
             # print("pasaste por aqui")
             future_data = pd.DataFrame(future_days)
             #renombramiento del campo 
@@ -183,11 +233,11 @@ class engine:
                 y_pred = pd.DataFrame(inverted.astype(int))
                 future_data[column]= inverted.astype(int)
             future_data = self.set_index_datetime(future_data)
-
             dataPrepare.index = pd.to_datetime(dataPrepare.index)
             future_data.index = pd.to_datetime(future_data.index)
             return dataPrepare, future_data
         
+    #Modulo para guardar las gráficas, cuando se hace una predicción    
     def GraphicDataCreate(self,datos, futureData, model_path):
 
         #tomamos la ruta del modelo y eliminamos el nombre del modelo
@@ -233,7 +283,7 @@ class engine:
         # model.predict(x_val)
         ultimosDias = data[data.index[int(len(data)*0.70)]:]
         values = ultimosDias.values
-        values = values.astype('float32' )
+        values = values.astype('float32')
         values = values.reshape(-1, 1)
         scaled = values
         reframed = self.series_to_supervised(scaled, pasos, 1)
@@ -248,6 +298,19 @@ class engine:
         x_test = values[len(values)-1:, :]
         x_test = x_test.reshape((x_test.shape[0], 1, x_test.shape[1]) )
         return x_test
+    
+    def saveMetadata(model_path,datetim_e,datos):
+        #Preparamos un archivo para guardar la metadata
+        metaData = model_path+'/metadata.json'
+        date, hour = datetim_e.split('_')
+        with open(metaData, 'w') as file:
+            json.dump([
+                {
+                '-> FECHA_ENTRENAMIENTO:': date,
+                '-> HORA_ENTRENAMIENTO:':hour,
+                '-> TOTAL_DATOS:': str(datos.size)
+                }
+            ],file)
 #Funciones nuevas para prediccion===================
 
 
@@ -256,34 +319,29 @@ class engine:
         with self.get_sqlconnection(self.sql_server) as cursor:
             datos = pd.read_sql_query(self.query, cursor)
             datos = self.set_index_datetime(datos)
-            # last_day = datetime.strptime(datos.index.max(), '%Y-%m') + relativedelta(month=1)
-            # print(last_day)
-            # future_days = [(last_day + timedelta(days=i)).strftime('%Y-%m-%d') for i in range(self.PASOS)]
-            # print(future_days)
-            # last_day = datos.index.max() + timedelta(days=1)
-            # future_days = [last_day + timedelta(days=i) for i in range(self.PASOS)]
+            first_day = datetime.strptime(datos.index.min(),'%Y-%m') + relativedelta(months=1)
             last_day = datetime.strptime(datos.index.max(), '%Y-%m' ) + relativedelta(months=1)
-            print(last_day)
+            # print(last_day)
             future_days = [last_day + relativedelta(months=i) for i in range(self.PASOS)]
-            print(future_days)
+            # print(future_days)
             for i in range(len(future_days)):
-                future_days[i] = str(future_days[i])[:10]
-            # future_data = pd.DataFrame(future_days)
-            # future_data.columns = ['fecha']
+                future_days[i] = str(future_days[i])[:7]
             future_data = pd.DataFrame(future_days, columns=['fecha'])
             model = self.crear_modeloFF()
             dirmodels_name = './models/'+datetime.now().strftime('%Y-%m-%d')
             if not os.path.exists(dirmodels_name):
                 os.makedirs(dirmodels_name, exist_ok=True)
+            # Parte nueva para guardar los modelos
+            datetim_e = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+            model_path = dirmodels_name+"/model-training"+datetim_e
+            os.makedirs(model_path, exist_ok=True)
             data = []
-            total_col = len(datos.columns)
-            print("total de columnas"+str(total_col))
-            for i,column in enumerate(datos.columns):
+            for column in datos.columns:
                 data = datos.filter([column])
                 data.set_index(datos.index, inplace=True)
                 data = self.eliminar_anomalias(data)
                 x_train, y_train, x_val, y_val, scaler, values = self.create_x_y_train(data)
-                model, x_test = self.entrenar_modelo(x_train, y_train, x_val, y_val, scaler, values, data, model)
+                model, x_test = self.entrenar_modelo(x_train, y_train, x_val, y_val, scaler, values, data, model,model_path)
                 results = []
                 for i in range(self.PASOS):
                     parcial = model.predict(x_test)
@@ -291,14 +349,11 @@ class engine:
                     x_test = self.agregarNuevoValor(x_test, parcial[0])
                 adimen = [x for x in results]
                 inverted = scaler.inverse_transform(adimen)
-                y_pred = pd.DataFrame(inverted.astype(int))
                 future_data[column]= inverted.astype(int)
-            # Parte nueva para guardar los modelos
-            datetim_e = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-            model_path = dirmodels_name+"/model-training"+datetim_e
-            os.makedirs(model_path, exist_ok=True)
+            #Continuacion para guardar el modelo
             model_name = model_path+'/model_training-'+datetim_e+'.keras'
             model.save(model_name)
+
             future_data = self.set_index_datetime(future_data)
 
             datos.index = pd.to_datetime(datos.index)
@@ -317,8 +372,9 @@ class engine:
                 data = datos[datos.columns[i]][:]
                 #Para asignar los valores de los años a los que está sujeto el proyecto se debe guardar en una
                 #variable global y luego 
-                plt.plot(data.index, data,label='Historial 2015 - 2020')
-                plt.plot(future_data.index, future_data[future_data.columns[i]], label='Predicción 2021 - 2022')
+
+                plt.plot(data.index, data,label='Historial {p0} - {p1}'.format(p0=str(first_day.year),p1=str(last_day.year-1)))
+                plt.plot(future_data.index, future_data[future_data.columns[i]], label='Predicción {p0}'.format(p0=str(last_day.year)))
                 xtics = data.index.union(future_data.index)[::8]
 
                 plt.xticks(xtics)
