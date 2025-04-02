@@ -1,0 +1,23 @@
+[
+    {
+        "TOTAL_DE_DATOS": "68",
+        "EPOCH": 100,
+        "FECHA_ENTRENAMIENTO": "12:02:49 07-03-2025",
+        "FECHA_MODIFICACION": "12:02:49 07-03-2025"
+    },
+    {
+        "name": "SGD",
+        "learning_rate": 0.009999999776482582,
+        "weight_decay": null,
+        "clipnorm": null,
+        "global_clipnorm": null,
+        "clipvalue": null,
+        "use_ema": false,
+        "ema_momentum": 0.99,
+        "ema_overwrite_frequency": null,
+        "loss_scale_factor": null,
+        "gradient_accumulation_steps": null,
+        "momentum": 0.9,
+        "nesterov": false
+    }
+]
