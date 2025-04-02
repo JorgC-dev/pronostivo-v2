@@ -147,7 +147,7 @@ def intro():
                    "Gracias por usar nuestro sistema")
     console.print(Panel(description, title=title, expand=False))
     console.rule("[bold green] Por favor, indique lo que hará: [/]")
-    options = ["Hacer Predicciones","Entrenar-Crear modelo","Hacer diagnóstico"]
+    options = ["Hacer Predicciones","Entrenar-Crear modelo","Reentrenamiento"]
     options = [options.pop()] if not os.path.exists('./models') else options
     for i, option in enumerate(options):
         console.print(f"{str(i+1)} > {option}")
@@ -207,32 +207,22 @@ def settings():
 
 def generate_sections(file_name, region_name, keys, values=None):
     config = configparser.ConfigParser()
-
-    # Intenta leer el archivo existente, si existe
     try:
         config.read(file_name)
     except Exception as e:
         print(f"Error al leer el archivo INI: {e}")
 
-    # Si la sección no existe, la crea
     if region_name not in config:
         config.add_section(region_name)
 
-    # Añade o actualiza las claves y valores
     for i, key in enumerate(keys):
         if values and i < len(values):
-            config.set(region_name, key, str(values[i]))  # Convierte a cadena
+            config.set(region_name, key, str(values[i]))
         else:
-            config.set(region_name, key, "")  # Valor predeterminado como cadena vacía
+            config.set(region_name, key, "")
 
-    # Escribe los cambios en el archivo
     with open(file_name, 'w') as configfile:
         config.write(configfile)
-
-# def read_sections(file_name):
-#     """
-#     Lee un archivo INI y lista sus regiones con sus valores.
-#     """
     
 
 

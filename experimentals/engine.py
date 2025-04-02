@@ -302,7 +302,7 @@ class engine:
             # plt.xticks(xtics)
             plt.xlabel('Fecha')
             plt.ylabel('Ventas')
-            plt.title('Predicción de la demanda del {p0} para el año del 2021'.format(p0=datos.columns[i]))
+            plt.title('Predicción de la demanda global {p0} para el año del {p1}'.format(p0=datos.columns[i],p1=str(last_day.year)))
             plt.legend()
             plt.figtext(0.01, 0.01, "Realizado el: "+datetime.now().strftime('%H:%M:%S %d-%m-%Y'), fontsize=10, color="gray")
             plt.figtext(0.60, 0.01, "Gestión de Innovación en Tecnología Informática S.C.P | Grupo Consultores®", fontsize=10, color="gray")
