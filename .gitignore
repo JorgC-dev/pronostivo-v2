@@ -1,3 +1,4 @@
 .env
 config.json
 models/
+models_previus/
