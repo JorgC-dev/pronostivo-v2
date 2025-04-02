@@ -256,7 +256,6 @@ def showSettingsModel():
         console.rule("[bold green]Gestión de modelos[/bold green]")
         console.print("[bold green]A continuación se presenta una tabla con los modelos disponibles[/bold green]")
         console.print("*** Seleccione un modelo para continuar ***")
-        # console.print("** Los modelos se encuentran dentro de carpetas, selecione una ***")
         table = Table(title="Modelos disponibles")
         table.add_column("Opción", style="cyan")
         table.add_column("Modelo", style="magenta")
@@ -286,6 +285,11 @@ def predictingModel(obj, sql_serverConfig, query, steps, model_path):
     console.print("[bold cyan]Ruta -> [/]"+model_path)
     console.print("[bold green]Iniciando proceso de predicción[/] "+model_path)
     obj.modelPredicFuncion(sql_serverConfig,query,steps, model_path)
+
+def retrainingModel(obj, sql_serverConfig, query, steps, model_path):
+    console.print("[bold cyan] Ruta -> [/]"+model_path)
+    console.print("[bold green] Iniciando proceso de Reentrenamiento... [/]")
+    obj.modelRetrainingFunction(sql_serverConfig,query,steps,model_path)
 
 
 def main(salir = False):
