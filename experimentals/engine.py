@@ -223,7 +223,7 @@ class engine:
         pasos = int(pasos)
         reconstrured_model = self.reconstrured_modelFunc(model_path)
         future_date, future_data, first_day, last_day = self.prepareData(sqlServerConfig,query,pasos,reconstrured_model)
-        self.GraphicDataCreate(future_date, future_data, model_path, first_day, last_day)
+        self.GraphicDataCreate(future_date, future_data, model_path, first_day, last_day,'p')
 
 
     def prepareData(self, sqlServerConfig, query, pasos, reconstrured_model):
@@ -272,13 +272,22 @@ class engine:
             return dataPrepare, future_data, first_day, last_day
         
     #Modulo para guardar las gráficas, cuando se hace una predicción    
-    def GraphicDataCreate(self,datos, futureData, model_path,first_day, last_day):
+    def GraphicDataCreate(self,datos, futureData, model_path,first_day, last_day, mode):
+        """
+        Este módulo puede generar una gráfica y establecer los directorios, de acuerdo 
+        al modo en el que esté: e -> ENTRENAMIENTO, r -> RE-ENTRENAMIENTO, p -> predicción 
+        """
 
         #tomamos la ruta del modelo y eliminamos el nombre del modelo
         path = os.path.dirname(model_path)
 
+        if mode == 'e':
+            pass
+        elif mode == 'r':
+            path = path+'/reTrainingModel_dataPredict'
+        elif mode == 'p':
+            path = path+'/reconstruredModel_dataPredict'
         #ubicamos la carpeta de predicciones de modelos reconstruidos
-        path = path+'/reconstruredModel_dataPredict'
 
         #Creamos una carpeta de dato entrenados con el modelo reconstruido
         if not os.path.exists(path):
@@ -335,19 +344,74 @@ class engine:
         print(features)
         with open(metaData, 'w') as file:
             json.dump(features,file, indent=4)
-#Funciones nuevas para prediccion===================
+    #Funciones nuevas para prediccion===================
 
-#Funciones nuevas para reentrenamiento================
+    #Funciones nuevas para reentrenamiento================
 
-def modelRetrainingFunction(self, sqlServerConfig,query, steps, model_path):
-    steps = int(steps)
-    reconstrured_model = self.reconstrured_modelFunc(model_path)
-    future_date, future_data, first_day, last_day = retrainingModel(model_path, reconstrured_model, sqlServerConfig,query,steps)
-    self.GraphicDataCreate(future_date, future_data, model_path, first_day, last_day)
+    def modelRetrainingFunction(self, sqlServerConfig,query, steps, model_path):
+        steps = int(steps)
+        reconstrured_model = self.reconstrured_modelFunc(model_path)
+        future_date, future_data, first_day, last_day = self.retrainingModel(model_path, reconstrured_model, sqlServerConfig,query,steps)
+        self.GraphicDataCreate(future_date, future_data, model_path, first_day, last_day,'r')
 
-def retrainingModel(self, model_path, reconstrured_model,sqlServerConfig,query,pasos):
-    with self.get_sqlconnection(sqlServerConfig) as cursor:
-            datos = pd.read_sql_query(query, cursor)
+    def retrainingModel(self, model_path, reconstrured_model,sqlServerConfig,query,pasos):
+        with self.get_sqlconnection(sqlServerConfig) as cursor:
+                datos = pd.read_sql_query(query, cursor)
+                datos = self.set_index_datetime(datos)
+                
+                #Modulo que controla si es en días o en meses
+                try: 
+                    #Si se trata de meses
+                    first_day = datetime.strptime(datos.index.min(),'%Y-%m') + relativedelta(months=1)
+                    last_day = datetime.strptime(datos.index.max(), '%Y-%m' ) + relativedelta(months=1)
+                    future_days = [last_day + relativedelta(months=i) for i in range(self.PASOS)]
+                    for i in range(len(future_days)):
+                        future_days[i] = str(future_days[i])[:7]
+                    print("Month_format_detected")
+                except Exception as e: 
+                    #si se trata de dias
+                    print("Days_format_detected")
+                    first_day = datos.index.min() + timedelta(days=1)
+                    last_day = datos.index.max() + timedelta(days=1)
+                    future_days = [last_day + timedelta(days=i) for i in range(self.PASOS)]
+                    for i in range(len(future_days)):
+                        future_days[i] = str(future_days[i])[:10]
+                #MD
+                
+                future_data = pd.DataFrame(future_days, columns=['fecha'])
+                model = reconstrured_model
+                model.compile(loss='mean_absolute_error',optimizer=RMSprop(learning_rate=0.001),metrics=['mse'])
+                data = []
+                for column in datos.columns:
+                    data = datos.filter([column])
+                    data.set_index(datos.index, inplace=True)
+                    data = self.eliminar_anomalias(data)
+                    x_train, y_train, x_val, y_val, scaler, values = self.create_x_y_train(data)
+                    model, x_test = self.entrenar_modelo(x_train, y_train, x_val, y_val, scaler, values, data, model,model_path)
+                    results = []
+                    for i in range(pasos):
+                        parcial = model.predict(x_test)
+                        results.append(parcial[0])
+                        x_test = self.agregarNuevoValor(x_test, parcial[0])
+                    adimen = [x for x in results]
+                    inverted = scaler.inverse_transform(adimen)
+                    future_data[column]= inverted.astype(int)
+                #Continuacion para guardar el modelo
+                model_name = model_path#+'/model_training-'+datetim_e+'.keras'
+                model.save(model_name)
+
+                future_data = self.set_index_datetime(future_data)
+
+                datos.index = pd.to_datetime(datos.index)
+                future_data.index = pd.to_datetime(future_data.index)
+                return datos, future_data, first_day, last_day
+
+    #Funciones nuevas para reentrenamiento================
+
+    def main(self):
+        #Core
+        with self.get_sqlconnection(self.sql_server) as cursor:
+            datos = pd.read_sql_query(self.query, cursor)
             datos = self.set_index_datetime(datos)
             
             #Modulo que controla si es en días o en meses
@@ -370,8 +434,14 @@ def retrainingModel(self, model_path, reconstrured_model,sqlServerConfig,query,p
             #MD
             
             future_data = pd.DataFrame(future_days, columns=['fecha'])
-            model = reconstrured_model
-            model.compile(loss='mean_absolute_error',optimizer=RMSprop(learning_rate=0.001),metrics=['mse'])
+            model = self.crear_modeloFF()
+            dirmodels_name = './models/'+datetime.now().strftime('%Y-%m-%d')
+            if not os.path.exists(dirmodels_name):
+                os.makedirs(dirmodels_name, exist_ok=True)
+            # Parte nueva para guardar los modelos
+            datetim_e = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+            model_path = dirmodels_name+"/model-training"+datetim_e
+            os.makedirs(model_path, exist_ok=True)
             data = []
             for column in datos.columns:
                 data = datos.filter([column])
@@ -380,7 +450,7 @@ def retrainingModel(self, model_path, reconstrured_model,sqlServerConfig,query,p
                 x_train, y_train, x_val, y_val, scaler, values = self.create_x_y_train(data)
                 model, x_test = self.entrenar_modelo(x_train, y_train, x_val, y_val, scaler, values, data, model,model_path)
                 results = []
-                for i in range(pasos):
+                for i in range(self.PASOS):
                     parcial = model.predict(x_test)
                     results.append(parcial[0])
                     x_test = self.agregarNuevoValor(x_test, parcial[0])
@@ -388,103 +458,42 @@ def retrainingModel(self, model_path, reconstrured_model,sqlServerConfig,query,p
                 inverted = scaler.inverse_transform(adimen)
                 future_data[column]= inverted.astype(int)
             #Continuacion para guardar el modelo
-            model_name = model_path#+'/model_training-'+datetim_e+'.keras'
+            model_name = model_path+'/model_training-'+datetim_e+'.keras'
             model.save(model_name)
 
             future_data = self.set_index_datetime(future_data)
 
             datos.index = pd.to_datetime(datos.index)
             future_data.index = pd.to_datetime(future_data.index)
-            return datos, future_data, first_day, last_day
 
-#Funciones nuevas para reentrenamiento================
+            #Creamos un directorio para guardar los datos del primer entrenamiento
+            path = model_path+"/trainedModel_dataPredict/"+datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+            os.makedirs(path)
+            
+            #Configuracion de las imagenes
+            plt.rcParams['figure.figsize' ] = (16, 9)
+            plt.style.use('fast')
 
-def main(self):
-    #Core
-    with self.get_sqlconnection(self.sql_server) as cursor:
-        datos = pd.read_sql_query(self.query, cursor)
-        datos = self.set_index_datetime(datos)
-        
-        #Modulo que controla si es en días o en meses
-        try: 
-            #Si se trata de meses
-            first_day = datetime.strptime(datos.index.min(),'%Y-%m') + relativedelta(months=1)
-            last_day = datetime.strptime(datos.index.max(), '%Y-%m' ) + relativedelta(months=1)
-            future_days = [last_day + relativedelta(months=i) for i in range(self.PASOS)]
-            for i in range(len(future_days)):
-                future_days[i] = str(future_days[i])[:7]
-            print("Month_format_detected")
-        except Exception as e: 
-            #si se trata de dias
-            print("Days_format_detected")
-            first_day = datos.index.min() + timedelta(days=1)
-            last_day = datos.index.max() + timedelta(days=1)
-            future_days = [last_day + timedelta(days=i) for i in range(self.PASOS)]
-            for i in range(len(future_days)):
-                future_days[i] = str(future_days[i])[:10]
-        #MD
-        
-        future_data = pd.DataFrame(future_days, columns=['fecha'])
-        model = self.crear_modeloFF()
-        dirmodels_name = './models/'+datetime.now().strftime('%Y-%m-%d')
-        if not os.path.exists(dirmodels_name):
-            os.makedirs(dirmodels_name, exist_ok=True)
-        # Parte nueva para guardar los modelos
-        datetim_e = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        model_path = dirmodels_name+"/model-training"+datetim_e
-        os.makedirs(model_path, exist_ok=True)
-        data = []
-        for column in datos.columns:
-            data = datos.filter([column])
-            data.set_index(datos.index, inplace=True)
-            data = self.eliminar_anomalias(data)
-            x_train, y_train, x_val, y_val, scaler, values = self.create_x_y_train(data)
-            model, x_test = self.entrenar_modelo(x_train, y_train, x_val, y_val, scaler, values, data, model,model_path)
-            results = []
-            for i in range(self.PASOS):
-                parcial = model.predict(x_test)
-                results.append(parcial[0])
-                x_test = self.agregarNuevoValor(x_test, parcial[0])
-            adimen = [x for x in results]
-            inverted = scaler.inverse_transform(adimen)
-            future_data[column]= inverted.astype(int)
-        #Continuacion para guardar el modelo
-        model_name = model_path+'/model_training-'+datetim_e+'.keras'
-        model.save(model_name)
+            #Graficar los dataframes
+            for i in range(len(datos.columns)):
+                data = datos[datos.columns[i]][:]
+                #Para asignar los valores de los años a los que está sujeto el proyecto se debe guardar en una
+                #variable global y luego 
 
-        future_data = self.set_index_datetime(future_data)
+                plt.plot(data.index, data,label='Historial {p0} - {p1}'.format(p0=str(first_day.year),p1=str(last_day.year-1)))
+                plt.plot(future_data.index, future_data[future_data.columns[i]], label='Predicción {p0}'.format(p0=str(last_day.year)))
+                # xtics = data.index.union(future_data.index)[::6]
 
-        datos.index = pd.to_datetime(datos.index)
-        future_data.index = pd.to_datetime(future_data.index)
-
-        #Creamos un directorio para guardar los datos del primer entrenamiento
-        path = model_path+"/trainedModel_dataPredict/"+datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        os.makedirs(path)
-        
-        #Configuracion de las imagenes
-        plt.rcParams['figure.figsize' ] = (16, 9)
-        plt.style.use('fast')
-
-        #Graficar los dataframes
-        for i in range(len(datos.columns)):
-            data = datos[datos.columns[i]][:]
-            #Para asignar los valores de los años a los que está sujeto el proyecto se debe guardar en una
-            #variable global y luego 
-
-            plt.plot(data.index, data,label='Historial {p0} - {p1}'.format(p0=str(first_day.year),p1=str(last_day.year-1)))
-            plt.plot(future_data.index, future_data[future_data.columns[i]], label='Predicción {p0}'.format(p0=str(last_day.year)))
-            # xtics = data.index.union(future_data.index)[::6]
-
-            # plt.xticks(xtics)
-            plt.xlabel('Fecha')
-            plt.ylabel('Ventas')
-            plt.title('Predicción de la demanda de {p0} para el año del {p1}'.format(p0=datos.columns[i],p1=str(last_day.year-1)))
-            plt.legend()
-            plt.figtext(0.01, 0.01, "Realizado el: "+datetime.now().strftime('%H:%M:%S %d-%m-%Y'), fontsize=10, color="gray")
-            plt.figtext(0.60, 0.01, "Gestión de Innovación en Tecnología Informática S.C.P | Grupo Consultores®", fontsize=10, color="gray")
-            name = path+'/GraphicalPrediction_on_'+str(datos.columns[i])+".jpg"
-            plt.savefig(name, dpi=300)
-            plt.close()  # Cerrar la figura para liberar memoria
+                # plt.xticks(xtics)
+                plt.xlabel('Fecha')
+                plt.ylabel('Ventas')
+                plt.title('Predicción de la demanda de {p0} para el año del {p1}'.format(p0=datos.columns[i],p1=str(last_day.year-1)))
+                plt.legend()
+                plt.figtext(0.01, 0.01, "Realizado el: "+datetime.now().strftime('%H:%M:%S %d-%m-%Y'), fontsize=10, color="gray")
+                plt.figtext(0.60, 0.01, "Gestión de Innovación en Tecnología Informática S.C.P | Grupo Consultores®", fontsize=10, color="gray")
+                name = path+'/GraphicalPrediction_on_'+str(datos.columns[i])+".jpg"
+                plt.savefig(name, dpi=300)
+                plt.close()  # Cerrar la figura para liberar memoria
 
 
 

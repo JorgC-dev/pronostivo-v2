@@ -6,19 +6,27 @@ from rich.table import Table
 import os
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 import configparser
-from tomlkit import load, dumps
-import keyboard  # Para detectar una entrada de texto en cualquier sistema operativo
 from engine import engine
 import pyodbc
+import random
+import string
+
 
 
 console = Console()
-
 keys = ["SERVER","PORT","DATABASE","USER","PASSWORD","DRIVER","OTHER"]
+SQL_PATH = './SQL/'
+SQL_TQUERY = SQL_PATH+'training_query.sql'
+SQL_RQUERY = SQL_PATH+'retraining_query.sql'
+SQL_PQUERY = SQL_PATH+'prediction_query.sql'
+INI_PATH = 'config.ini'
+MODELSDIR_PATH = './models/'
 
-def prepareConection():
+def prepareConection(mode):
     config = configparser.ConfigParser()
-    if not os.path.exists('config.ini'):
+    ready = checkAllDirectory()
+    if not ready:
+    # if not os.path.exists('config.ini'):
         settings()
     else:
         try:
@@ -62,7 +70,7 @@ def prepareConection():
                     table.add_row("[bold magenta]a[/]","[bold magenta]añadir otro[/]","[bold magenta]■■■■■[/]","[bold magenta]■■■■■[/]","[bold magenta]■■■■■[/]","[bold magenta]■■■■■[/]","[bold magenta]■■■■■[/]","[bold magenta]■■■■■[/]")
                     console.print(table)
 
-                    print(len(config))
+                    # print(len(config))
                     
                     #generlo listado de opciones
                     choices = [str(i+1) for i in range(len(config))]
@@ -90,7 +98,7 @@ def prepareConection():
                             else: 
                                 vstrConnection += key+"="+value+";"
                         print(vstrConnection)
-                        engine, vstrConnection,query = check_engine(vstrConnection)
+                        engine, vstrConnection,query = check_engine(vstrConnection,mode)
                         return engine, vstrConnection, query
                 else:
                     pass
@@ -101,42 +109,65 @@ def prepareConection():
 
 def setMode(mode, engine, sql_serverConfig,query):
     print("Iniciando gestor de modulos de funcionamiento")
-    if mode == "Entrenar-Crear modelo":
-        engine.main()
-    if mode == "Hacer Predicciones":
-        #preguntar sobre cuantos días de prediccion quiere
-        steps = Prompt.ask("¿Cuantos días a futuro?")
-        model_path = showSettingsModel()
-        predictingModel(engine, sql_serverConfig, query, steps, model_path)
-    if mode == "Reentrenamiento":
-        model_path = showSettingsModel()
+    try:
+        if mode == "Entrenar-Crear modelo":
+                engine.main()
+        if mode == "Hacer Predicciones":
+            #preguntar sobre cuantos días de prediccion quiere
+            steps = Prompt.ask("¿Cuantos días a futuro?")
+            model_path = showSettingsModel()
+            predictingModel(engine, sql_serverConfig, query, steps, model_path)
+        if mode == "Reentrenamiento":
+            model_path = showSettingsModel()
+            retrainingModel(engine,sql_serverConfig,query,31,model_path)
+    except Exception as e:
+        console.print("[bold red] Error!, Verifique que la query sea correcta [/]")
+        console.print(f'[bold red] Detalles: {e} [/]')
 
 def set_terminal_size(columns=80, rows=24):
     os.system(f'mode con: cols={columns} lines={rows}' if os.name == 'nt' else f'printf "\e[8;{rows};{columns}t"')
 
-def setSQLServerConfig(server_name, database_name,driver):
-    config =f"""
-        DRIVER={{{driver}}};
-        Server={server_name};
-        database={database_name};
-        Trusted_connection=yes;
-        """
-    return config
+# def setSQLServerConfig(server_name, database_name,driver):
+#     config =f"""
+#         DRIVER={{{driver}}};
+#         Server={server_name};
+#         database={database_name};
+#         Trusted_connection=yes;
+#         """
+#     return config
 
 
-def check_engine(sql_serverConfig):
-    console.print("[bold green] Conectando con la base de datos...[/bold green]")
-    qPrompt = input("Por favor, ingrese la consulta SQL a continuación.")
-    qPrompt = qPrompt.strip()
-    obj = engine(sql_serverConfig, str(qPrompt))
-    try: 
-        obj.get_sqlconnection(sql_serverConfig)
-    except Exception as e:
-        console.print("[bold red]¡Error![/bold red]")
-        console.print(f"[bold red]Error: {e}[/bold red]")
-        pass
+def check_engine(sql_serverConfig,mode):
+    
+    while True:
+        console.clear() 
+        console.print("[bold green] Obteniendo la query...[/bold green]")
+        #Revisar la carpeta sql y checar que los archivos sql de entrenamiento y reentrenamiento estén disponibles
+        # qPrompt = input("Por favor, ingrese la consulta SQL a continuación.")
+        # qPrompt = qPrompt.strip()
 
-    return obj, sql_serverConfig, qPrompt
+        if mode == "Entrenar-Crear modelo":
+            query_path = SQL_TQUERY
+        if mode == "Hacer Predicciones":
+            query_path = SQL_PQUERY
+        if mode == "Reentrenamiento":
+            query_path = SQL_RQUERY
+        
+        with open(query_path, 'r', encoding='utf-8') as file:
+            sql_script = file.read()
+            console.print("[bold green] Validando contenido...[/bold green]") 
+        if sql_script:
+            #Si el archivo no está vacío
+            obj = engine(sql_serverConfig, str(sql_script))
+            try: 
+                obj.get_sqlconnection(sql_serverConfig)
+            except Exception as e:
+                console.print("[bold red]¡Error![/bold red]")
+                console.print(f"[bold red]Error: {e}[/bold red]")
+                pass
+            return obj, sql_serverConfig, sql_script
+        else: 
+            console.print("[bold orange] Archivo vacío, por favor, inserte la consulta y vuelva a intentarlo [/]")
 
 
 
@@ -161,12 +192,31 @@ def intro():
 
 def checkAllDirectory():
     result = False
-    try: 
-        if not os.path.exists("./models/"):
-            os.makedirs("./models")
-        if not os.path.exists("config.json"):
-            with open('config.json','w') as file:
+    try:
+        #Model's path 
+        if not os.path.exists(MODELSDIR_PATH):
+            os.makedirs(MODELSDIR_PATH)
+        #Ini's path
+        if not os.path.exists(INI_PATH):
+            with open(INI_PATH,'w') as file:
                 pass
+        #SQL's path
+        if not os.path.exists(SQL_PATH):
+            os.makedirs(SQL_PATH)
+
+            #traininig files
+            with open(SQL_TQUERY,'w') as file: 
+                pass
+            
+            #Retraininig files
+            with open(SQL_RQUERY,'w') as file:
+                pass
+
+            #Prediction file
+            with open(SQL_PQUERY,'w') as file:
+                pass
+
+        
         result = True
     except Exception as e: 
         result = False
@@ -198,12 +248,20 @@ def settings():
             value = Prompt.ask(prompt)
             if value:
                 Kvalues.append(value)
-        print(Kvalues)
-        print(keys)
+        # print(Kvalues)
+        # print(keys)
+        idSection =  generateIDSections()
 
         #una vez generado mandamos
-        generate_sections('config.ini','uno',keys,Kvalues)
+        generate_sections(INI_PATH,idSection,keys,Kvalues)
     prepareConection()
+
+def generateIDSections():
+    numero = random.randint(10, 99)
+    letra1 = random.choice(string.ascii_uppercase)
+    letra2 = random.choice(string.ascii_uppercase)
+    id_aleatorio = f"ID{numero}{letra1}{letra2}"
+    return id_aleatorio
 
 def generate_sections(file_name, region_name, keys, values=None):
     config = configparser.ConfigParser()
@@ -297,7 +355,7 @@ def main(salir = False):
     while salir == False:
         console.clear()
         vseleccion = intro()
-        engine, vstrConnection, query =  prepareConection()
+        engine, vstrConnection, query =  prepareConection(vseleccion)
         setMode(vseleccion,engine,vstrConnection,query)
         console.print("[bold cyan]\n¿Desea salir del programa?[/bold cyan]")
         keyboard1 = Prompt.ask("[bold cyan]Presione [bold red]S[/bold red] para salir o cualquier otra tecla para continuar[/bold cyan]")
