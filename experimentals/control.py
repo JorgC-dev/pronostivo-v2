@@ -127,15 +127,6 @@ def setMode(mode, engine, sql_serverConfig,query):
 def set_terminal_size(columns=80, rows=24):
     os.system(f'mode con: cols={columns} lines={rows}' if os.name == 'nt' else f'printf "\e[8;{rows};{columns}t"')
 
-# def setSQLServerConfig(server_name, database_name,driver):
-#     config =f"""
-#         DRIVER={{{driver}}};
-#         Server={server_name};
-#         database={database_name};
-#         Trusted_connection=yes;
-#         """
-#     return config
-
 
 def check_engine(sql_serverConfig,mode):
     
@@ -348,6 +339,8 @@ def retrainingModel(obj, sql_serverConfig, query, steps, model_path):
     console.print("[bold cyan] Ruta -> [/]"+model_path)
     console.print("[bold green] Iniciando proceso de Reentrenamiento... [/]")
     obj.modelRetrainingFunction(sql_serverConfig,query,steps,model_path)
+    console.print("[bold green]✔ Modelo Reentrenado guardado con éxito [/]")
+    console.print("[bold green]✔ Proceso de Reentrenamiento finalizado... [/]")
 
 
 def main(salir = False):

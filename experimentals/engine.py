@@ -100,15 +100,26 @@ class engine:
         model.summary()
         return model
 
-    def entrenar_modelo(self,x_train, y_train, x_val, y_val, scaler, values, data, model,model_path):
+    def entrenar_modelo(self,x_train, y_train, x_val, y_val, scaler, values, data, model,model_path,mode):
         EPOCHS = 100
         early_stop = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
         history = model.fit(x_train, y_train, epochs=EPOCHS, validation_data=(x_val, y_val), batch_size=self.PASOS)#, callbacks=[early_stop])
         results = model.predict(x_val)
 
-        #Preparamos el lugar para guardar las configuraciones del modelo
+
+        #Creamos la carpeta principal accuracy
         path = model_path+"/accuracy/"
-        os.makedirs(path)
+        os.makedirs(path, exist_ok=True)
+
+        #definimos el modo
+        datetim_e_path = datetime.now().strftime('%H-%M-%S_%d-%m-%Y')
+        if mode == 't':
+            path = path+'Training/'+datetim_e_path
+        if mode == 'r':
+            path = path+'Retraining/'+datetim_e_path
+
+        #dependiendo del caso, creamos la carpeta de accuracy
+        os.makedirs(path,exist_ok=True)
 
         #Configuracion de las imagenes
         plt.rcParams['figure.figsize' ] = (16, 9)
@@ -150,30 +161,47 @@ class engine:
         plt.close()
 
         #Validacion 4
-
-        #Preparamos la data a guardar en metadata
         datetim_e = datetime.now().strftime('%H:%M:%S %d-%m-%Y')
-        #buscamos el optimizador
-        optimizer_model = model.optimizer.get_config()
-        # metadata = {
-        #     "TOTAL_DE_DATOS": str(data.size),
-        #     "EPOCH": len(history.history['loss']),
-        #     "FECHA_ENTRENAMIENTO": datetim_e,
-        #     "FECHA_MODIFICACION": datetim_e
-        # }
+        #identificamos que modo es
+        if mode == 't':
+            #buscamos el optimizador
+            optimizer_model = model.optimizer.get_config()
+            # metadata = {
+            #     "TOTAL_DE_DATOS": str(data.size),
+            #     "EPOCH": len(history.history['loss']),
+            #     "FECHA_ENTRENAMIENTO": datetim_e,
+            #     "FECHA_MODIFICACION": datetim_e
+            # }
 
-        metadata = [
-            {
-                "TOTAL_DE_DATOS": str(data.size),
-                "EPOCH": len(history.history['loss']),
-                "FECHA_ENTRENAMIENTO": datetim_e,
-                "FECHA_MODIFICACION": datetim_e
-            },
-            optimizer_model
-        ]
+            metadata = [
+                {
+                    "GENERAl_INFO":{
+                        "TOTAL_DE_DATOS": str(data.size),
+                        "EPOCH": len(history.history['loss']),
+                        "FECHA_ENTRENAMIENTO": datetim_e,
+                        "FECHA_MODIFICACION": datetim_e
+                    }
+                },
+                {
+                    "OPTIMIZER_CONFIG": optimizer_model
+                }
+            ]
 
-        #Guardamos la metadata
-        self.saveMetadata(model_path,metadata)
+            #Guardamos la metadata
+            self.saveMetadata(model_path,metadata)
+        if mode == 'r':
+            path = model_path+'/metadata.json'
+            #Preparamos para guardar
+            with open(path,'r') as file: 
+                metadata = json.load(file)
+            if metadata:
+                total_data = metadata[0]["GENERAl_INFO"]["TOTAL_DE_DATOS"]
+                total_data = (int(total_data)+data.size)
+                metadata[0]["GENERAl_INFO"]["FECHA_MODIFICACION"] = datetim_e
+                metadata[0]["GENERAl_INFO"]["TOTAL_DE_DATOS"] = str(total_data)
+                
+                with open(path,'w') as file: 
+                    json.dump(metadata, file, indent=4)
 
         ultimosDias = data[data.index[int(len(data)*0.80)]:]
         values = ultimosDias.values
@@ -351,8 +379,9 @@ class engine:
     def modelRetrainingFunction(self, sqlServerConfig,query, steps, model_path):
         steps = int(steps)
         reconstrured_model = self.reconstrured_modelFunc(model_path)
-        future_date, future_data, first_day, last_day = self.retrainingModel(model_path, reconstrured_model, sqlServerConfig,query,steps)
-        self.GraphicDataCreate(future_date, future_data, model_path, first_day, last_day,'r')
+        self.retrainingModel(model_path, reconstrured_model, sqlServerConfig,query,steps)
+        # future_date, future_data, first_day, last_day = self.retrainingModel(model_path, reconstrured_model, sqlServerConfig,query,steps)
+        # self.GraphicDataCreate(future_date, future_data, model_path, first_day, last_day,'r')
 
     def retrainingModel(self, model_path, reconstrured_model,sqlServerConfig,query,pasos):
         with self.get_sqlconnection(sqlServerConfig) as cursor:
@@ -387,24 +416,25 @@ class engine:
                     data.set_index(datos.index, inplace=True)
                     data = self.eliminar_anomalias(data)
                     x_train, y_train, x_val, y_val, scaler, values = self.create_x_y_train(data)
-                    model, x_test = self.entrenar_modelo(x_train, y_train, x_val, y_val, scaler, values, data, model,model_path)
-                    results = []
-                    for i in range(pasos):
-                        parcial = model.predict(x_test)
-                        results.append(parcial[0])
-                        x_test = self.agregarNuevoValor(x_test, parcial[0])
-                    adimen = [x for x in results]
-                    inverted = scaler.inverse_transform(adimen)
-                    future_data[column]= inverted.astype(int)
+                    model_dirname = os.path.dirname(model_path)
+                    model, x_test = self.entrenar_modelo(x_train, y_train, x_val, y_val, scaler, values, data, model,model_dirname,'r')
+                    # results = []
+                    # for i in range(pasos):
+                    #     parcial = model.predict(x_test)
+                    #     results.append(parcial[0])
+                    #     x_test = self.agregarNuevoValor(x_test, parcial[0])
+                    # adimen = [x for x in results]
+                    # inverted = scaler.inverse_transform(adimen)
+                    # future_data[column]= inverted.astype(int)
                 #Continuacion para guardar el modelo
                 model_name = model_path#+'/model_training-'+datetim_e+'.keras'
                 model.save(model_name)
 
-                future_data = self.set_index_datetime(future_data)
+                # future_data = self.set_index_datetime(future_data)
 
-                datos.index = pd.to_datetime(datos.index)
-                future_data.index = pd.to_datetime(future_data.index)
-                return datos, future_data, first_day, last_day
+                # datos.index = pd.to_datetime(datos.index)
+                # future_data.index = pd.to_datetime(future_data.index)
+                # return datos, future_data, first_day, last_day
 
     #Funciones nuevas para reentrenamiento================
 
@@ -448,7 +478,7 @@ class engine:
                 data.set_index(datos.index, inplace=True)
                 data = self.eliminar_anomalias(data)
                 x_train, y_train, x_val, y_val, scaler, values = self.create_x_y_train(data)
-                model, x_test = self.entrenar_modelo(x_train, y_train, x_val, y_val, scaler, values, data, model,model_path)
+                model, x_test = self.entrenar_modelo(x_train, y_train, x_val, y_val, scaler, values, data, model,model_path,'t')
                 results = []
                 for i in range(self.PASOS):
                     parcial = model.predict(x_test)
