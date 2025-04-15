@@ -1,11 +1,10 @@
 SELECT
-    CAST(f.OrderDate AS DATE) AS [sales_date],
-    CAST(SUM(f.SalesAmount) AS INT) AS TotalVentas
+[F].[Fecha] AS fecha,
+SUM([H]. [cantidad]) AS TotalVentas
 FROM
-    FactInternetSales AS f
+[demo_prediccion]. [dbo]. [hechos] AS [H]
+INNER JOIN [demo_prediccion]. [dbo]. [Dim_fechas] AS [f] ON [H].[id_DimFechas] = [F].[id]
 WHERE 
-    f.OrderDate < '2013-01-01'
-GROUP BY
-    CAST(f.OrderDate AS DATE)
-ORDER BY
-    CAST(f.OrderDate AS DATE) ASC;
+[F].[Fecha] > '2016-12-31' AND [F].[Fecha] < '2020-01-01'
+GROUP BY [F].[Fecha]
+ORDER BY [F].[Fecha]

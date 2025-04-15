@@ -6,7 +6,8 @@ from rich.table import Table
 import os
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 import configparser
-from engine import engine
+# from experimentals.engine import engine
+import engine
 import pyodbc
 import random
 import string
@@ -146,16 +147,21 @@ def check_engine(sql_serverConfig,mode):
         
         with open(query_path, 'r', encoding='utf-8') as file:
             sql_script = file.read()
+            # print(sql_serverConfig)
             console.print("[bold green] Validando contenido...[/bold green]") 
         if sql_script:
             #Si el archivo no está vacío
             obj = engine(sql_serverConfig, str(sql_script))
-            try: 
-                obj.get_sqlconnection(sql_serverConfig)
-            except Exception as e:
-                console.print("[bold red]¡Error![/bold red]")
-                console.print(f"[bold red]Error: {e}[/bold red]")
-                pass
+            if obj:
+                try: 
+                    print("el sql_server es: ",sql_serverConfig)
+                    # obj.get_sqlconnection(sql_serverConfig)
+                except Exception as e:
+                    console.print("[bold red]¡Error![/bold red]")
+                    console.print(f"[bold red]Error: {e}[/bold red]")
+                    pass
+            else:
+                console.print("[bold red]¡Engine no respondió![/bold red]")
             return obj, sql_serverConfig, sql_script
         else: 
             console.print("[bold orange] Archivo vacío, por favor, inserte la consulta y vuelva a intentarlo [/]")
@@ -239,12 +245,10 @@ def settings():
             value = Prompt.ask(prompt)
             if value:
                 Kvalues.append(value)
-        # print(Kvalues)
-        # print(keys)
         idSection =  generateIDSections()
 
-        #una vez generado mandamos
-        generate_sections(INI_PATH,idSection,keys,Kvalues)
+    #una vez generado mandamos
+    generate_sections(INI_PATH,idSection,keys,Kvalues)
     prepareConection()
 
 def generateIDSections():
