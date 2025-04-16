@@ -21,7 +21,7 @@ import json
 
 
 
-class engine:
+class engine_disc:
     def __init__(self, sql_serverConfig,query):
         self.query = query
         self.sql_server= sql_serverConfig

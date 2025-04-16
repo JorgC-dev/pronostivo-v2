@@ -7,7 +7,7 @@ import os
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 import configparser
 # from experimentals.engine import engine
-import engine
+from engine import engine
 import pyodbc
 import random
 import string
@@ -154,8 +154,7 @@ def check_engine(sql_serverConfig,mode):
             obj = engine(sql_serverConfig, str(sql_script))
             if obj:
                 try: 
-                    print("el sql_server es: ",sql_serverConfig)
-                    # obj.get_sqlconnection(sql_serverConfig)
+                    obj.get_sqlconnection(sql_serverConfig)
                 except Exception as e:
                     console.print("[bold red]¡Error![/bold red]")
                     console.print(f"[bold red]Error: {e}[/bold red]")

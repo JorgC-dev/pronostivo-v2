@@ -129,15 +129,12 @@ class engine:
         #definimos el modo
         datetim_e_path = datetime.now().strftime('%H-%M-%S_%d-%m-%Y')
         if mode == 't':
-            if id == 0:
-                path = path+'Training/'+datetim_e_path
-            else:
-                path = path+'Training/'+id
+            path = path+'Training/'+datetim_e_path
         if mode == 'r':
             if id == 0:
                 path = path+'Training/'+datetim_e_path
             else:
-                path = path+'Training/'+id
+                path = path+'Training/'+str(id)
 
         #dependiendo del caso, creamos la carpeta de accuracy
         os.makedirs(path,exist_ok=True)
@@ -422,7 +419,7 @@ class engine:
                 
                 future_data = pd.DataFrame(future_days, columns=['fecha'])
                 model = reconstrured_model
-                model.compile(loss='mean_absolute_error',optimizer=RMSprop(learning_rate=0.001),metrics=['mse'])
+                model.compile(loss='mean_absolute_error',  optimizer='Adam',metrics=['mse', 'mae'])
                 data = []
                 for column in datos.columns:
                     data = datos.filter([column])
@@ -528,7 +525,7 @@ class engine:
                 future_data[column]= inverted.astype(int)
 
                 #----------------------------
-                datetim_e = productID
+                datetim_e = str(productID)
                 #----------------------------
                 
                 #Continuacion para guardar el modelo
@@ -545,7 +542,8 @@ class engine:
             #----------------------------
 
             #Creamos un directorio para guardar los datos del primer entrenamiento
-            path = model_path+"/trainedModel_dataPredict/"+datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+            # path = model_path+"/trainedModel_dataPredict/"+datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+            path = model_path+"/trainedModel_dataPredict/"+str(productID)
             os.makedirs(path)
             
             #Configuracion de las imagenes
