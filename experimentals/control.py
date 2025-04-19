@@ -4,126 +4,215 @@ from rich.text import Text
 from rich.prompt import Prompt
 from rich.table import Table
 import os
-import json
-import keyboard  # Para detectar una entrada de texto en cualquier sistema operativo
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+import configparser
+# from experimentals.engine import engine
 from engine import engine
-from rich.__main__ import make_test_card
+import pyodbc
+import random
+import string
+
+
 
 console = Console()
-
-# def wait_for_input():
-#     console.print("[bold cyan]\nEscribe algo y presiona Enter para continuar...[/bold cyan]")
-#     user_input = input()  # Espera la entrada de una cadena y la almacena
-#     return user_input
-
-def initialyze():
-    set_terminal_size(100, 0)
-    console.clear()
-    intro()
+keys = ["SERVER","PORT","DATABASE","USER","PASSWORD","DRIVER","OTHER"]
+SQL_PATH = './SQL/'
+SQL_TQUERY = SQL_PATH+'training_query.sql'
+SQL_RQUERY = SQL_PATH+'retraining_query.sql'
+SQL_PQUERY = SQL_PATH+'prediction_query.sql'
+INI_PATH = 'config.ini'
+MODELSDIR_PATH = './models/'
 
 def prepareConection(mode):
-    if not os.path.exists('config.json'):
+    config = configparser.ConfigParser()
+    ready = checkAllDirectory()
+    if not ready:
+    # if not os.path.exists('config.ini'):
         settings()
-    else: 
-        table = Table("#","Servers_name","Databases_name","Drivers Available")
-        with open('config.json', 'r') as f: 
-            config = json.load(f)
+    else:
+        try:
+            config.read('config.ini') 
+            console.clear()
+            console.print("[bold green]GESTOR DE CONFIGURACIÓN DE CONEXIÓN SIPPBST [/]")
+            console.print("A continuación se muestran los parámetros de conexión a base de datos registrados")
+            table = Table("#","SERVER","PORT","DATABASE","USER","PASSWORD","DRIVER","OTHER")
             if config:
                 if len(config) >= 1:
-                    for i in range(len(config)):
-                        table.add_row(str(i+1),str(config[i]['server_name']),str(config[i]['database_name']), str(config[i]['driver']))
+                    num = 1
+                    for section in config.sections():
+                        server = ""
+                        port= ""
+                        database =""
+                        uid =""
+                        password = ""
+                        driver = ""
+                        other = ""
+                        
+                        #create variables to asign the key and the value
+                        for key, value in config[section].items():
+                            #create variables with the info about each one
+                            if key == 'server':
+                                server = value
+                            elif key == 'port':
+                                port = str(value)
+                            elif key == 'database':
+                                database = value
+                            elif key == 'user':
+                                uid = value
+                            elif key == 'password':
+                                password = value
+                            elif key == 'driver':
+                                driver = value
+                            elif key == 'other':
+                                other = value
+                        #add the variables at the table
+                        table.add_row(str(num),server,port, database, uid, password, driver, other)
+                        num += 1
+                    table.add_row("[bold magenta]a[/]","[bold magenta]añadir otro[/]","[bold magenta]■■■■■[/]","[bold magenta]■■■■■[/]","[bold magenta]■■■■■[/]","[bold magenta]■■■■■[/]","[bold magenta]■■■■■[/]","[bold magenta]■■■■■[/]")
+                    console.print(table)
+
+                    # print(len(config))
+                    
+                    #generlo listado de opciones
+                    choices = [str(i+1) for i in range(len(config))]
+                    choices.append("a")
+                    opcion = Prompt.ask("[bold blue]•[/] Selecciona una opción", choices= choices)
+                    
+                    if opcion == 'a':
+                        #add items
+                        settings()
+                    else:
+                        #generate connection setting string
+                        rgSelected = list(config.keys())[int(opcion)]
+                        properties = config[rgSelected]
+                        vstrConnection = ""
+                        for key, value in properties.items(): 
+                            
+                            if key == "driver":
+                                vstrConnection += key+"={"+value+"};"
+                            elif key == "other":
+                                vstrConnection += value+";"
+                            elif key == "port":
+                                vstrConnection += ","+value+";"
+                            elif key == "server":
+                                vstrConnection += key+"="+value
+                            else: 
+                                vstrConnection += key+"="+value+";"
+                        print(vstrConnection)
+                        engine, vstrConnection,query = check_engine(vstrConnection,mode)
+                        return engine, vstrConnection, query
                 else:
-                    table.add_row("1",str(config['server_name']),str(config['database_name']), str(config['driver']))
-                console.print(table)
-                opcion = Prompt.ask("[bold blue]•[/] Selecciona una opción", choices=[str(i+1) for i in range(len(config))])
-                server_name = config[int(opcion)-1]['server_name']
-                database_name = config[int(opcion)-1]['database_name']
-                driver = config[int(opcion)-1]['driver']
-                # console.print("[bold green]Inicializando...[/bold green]")
-                sqlServerConfig = setSQLServerConfig(server_name, database_name, driver)
-                engine, sql_serverConfig,query = check_engine(sqlServerConfig)
-                setMode(mode,engine,sql_serverConfig,query)
-                console.print("[bold green]:heavy_check_mark: Proceso terminado con éxito")
-                console.print("[bold green]:heavy_check_mark: Modelo guardado correctamente")
+                    pass
+        except Exception as e: 
+            console.print("[bold red] Hay un error con el archivo [/]")
+            console.print(e)
 
 
 def setMode(mode, engine, sql_serverConfig,query):
-    # print("pasaste aqui")
-    if mode == "Entrenar-Crear modelo":
-        engine.main()
-    if mode == "Hacer Predicciones":
-        showSettingsModel(engine,sql_serverConfig,query)
+    print("Iniciando gestor de modulos de funcionamiento")
+    try:
+        if mode == "Entrenar-Crear modelo":
+                engine.main()
+        if mode == "Hacer Predicciones":
+            #preguntar sobre cuantos días de prediccion quiere
+            steps = Prompt.ask("¿Cuantos días a futuro?")
+            model_path = showSettingsModel()
+            predictingModel(engine, sql_serverConfig, query, steps, model_path)
+        if mode == "Reentrenamiento":
+            model_path = showSettingsModel()
+            retrainingModel(engine,sql_serverConfig,query,31,model_path)
+    except Exception as e:
+        console.print("[bold red] Error!, Verifique que la query sea correcta [/]")
+        console.print(f'[bold red] Detalles: {e} [/]')
 
 def set_terminal_size(columns=80, rows=24):
     os.system(f'mode con: cols={columns} lines={rows}' if os.name == 'nt' else f'printf "\e[8;{rows};{columns}t"')
 
-def setSQLServerConfig(server_name, database_name,driver):
-    config =f"""
-        DRIVER={{{driver}}};
-        Server={server_name};
-        database={database_name};
-        Trusted_connection=yes;
-        """
-    return config
 
+def check_engine(sql_serverConfig,mode):
+    
+    while True:
+        console.clear() 
+        console.print("[bold green] Obteniendo la query...[/bold green]")
+        #Revisar la carpeta sql y checar que los archivos sql de entrenamiento y reentrenamiento estén disponibles
+        # qPrompt = input("Por favor, ingrese la consulta SQL a continuación.")
+        # qPrompt = qPrompt.strip()
 
-def check_engine(sql_serverConfig):
-    console.print("[bold green]Conectando con la base de datos...[/bold green]")
-    query = """
-            SELECT
-            SUBSTRING(CAST([F].[Fecha] AS VARCHAR),0,8) AS fecha,
-            SUM([H].[cantidad]) AS cantidad
-            FROM
-            [demo_prediccion].[dbo]. [hechos] AS [H]
-            INNER JOIN [demo_prediccion].[dbo].[Dim_fechas] AS [f] ON [H].[id_DimFechas] = [F].[id]
-            GROUP BY SUBSTRING(CAST([F].[Fecha] AS VARCHAR),0,8)
-            ORDER BY SUBSTRING(CAST([F].[Fecha] AS VARCHAR),0,8)
-        """
-    obj = engine(sql_serverConfig, query)
-    try: 
-        obj.get_sqlconnection(sql_serverConfig)
-    except Exception as e:
-        console.print("[bold red]¡Error![/bold red]")
-        console.print(f"[bold red]Error: {e}[/bold red]")
-        pass
-
-    return obj, sql_serverConfig, query
+        if mode == "Entrenar-Crear modelo":
+            query_path = SQL_TQUERY
+        if mode == "Hacer Predicciones":
+            query_path = SQL_PQUERY
+        if mode == "Reentrenamiento":
+            query_path = SQL_RQUERY
+        
+        with open(query_path, 'r', encoding='utf-8') as file:
+            sql_script = file.read()
+            # print(sql_serverConfig)
+            console.print("[bold green] Validando contenido...[/bold green]") 
+        if sql_script:
+            #Si el archivo no está vacío
+            obj = engine(sql_serverConfig, str(sql_script))
+            if obj:
+                try: 
+                    obj.get_sqlconnection(sql_serverConfig)
+                except Exception as e:
+                    console.print("[bold red]¡Error![/bold red]")
+                    console.print(f"[bold red]Error: {e}[/bold red]")
+                    pass
+            else:
+                console.print("[bold red]¡Engine no respondió![/bold red]")
+            return obj, sql_serverConfig, sql_script
+        else: 
+            console.print("[bold orange] Archivo vacío, por favor, inserte la consulta y vuelva a intentarlo [/]")
 
 
 
 def intro():
-    title = Text("EnvPrediccion | Grupo Consultores® 2025", style="bold yellow")
+    title = Text("SIPPBST v2.0 | Grupo Consultores® 2025", style="bold yellow")
     description = ("Sea bienvenido a este programa de predicción de la demanda de productos, con el cual podrá predecir la demanda de productos de forma personalizada "
                    "Es un sistema robusto, confiable y se adapta a sus necesidades. Esta CLI le guiará en el proceso de configuración inicial del sistema. "
                    "Gracias por usar nuestro sistema")
     console.print(Panel(description, title=title, expand=False))
-    console.print()
     console.rule("[bold green] Por favor, indique lo que hará: [/]")
-    options = ["Hacer Predicciones","Entrenar-Crear modelo"]
+    options = ["Hacer Predicciones","Entrenar-Crear modelo","Reentrenamiento"]
     options = [options.pop()] if not os.path.exists('./models') else options
     for i, option in enumerate(options):
         console.print(f"{str(i+1)} > {option}")
     vseleccion = int(Prompt.ask(choices=[str(i) for i in range(1,len(options)+1)]))
     vseleccion = options[vseleccion-1]
     print(vseleccion)
-    #Cuando se Crea-entrenena modelos
-    if vseleccion == "Entrenar-Crear modelo": 
-        prepareConection(vseleccion)
-    #cuando se cargan y se hacen predicciones
-    if vseleccion == "Hacer Predicciones":
-        prepareConection(vseleccion)
+    return vseleccion
 
 
 
 
 def checkAllDirectory():
     result = False
-    try: 
-        if not os.path.exists("./models/"):
-            os.makedirs("./models")
-        if not os.path.exists("config.json"):
-            with open('config.json','w') as file:
+    try:
+        #Model's path 
+        if not os.path.exists(MODELSDIR_PATH):
+            os.makedirs(MODELSDIR_PATH)
+        #Ini's path
+        if not os.path.exists(INI_PATH):
+            with open(INI_PATH,'w') as file:
                 pass
+        #SQL's path
+        if not os.path.exists(SQL_PATH):
+            os.makedirs(SQL_PATH)
+
+            #traininig files
+            with open(SQL_TQUERY,'w') as file: 
+                pass
+            
+            #Retraininig files
+            with open(SQL_RQUERY,'w') as file:
+                pass
+
+            #Prediction file
+            with open(SQL_PQUERY,'w') as file:
+                pass
+
+        
         result = True
     except Exception as e: 
         result = False
@@ -131,27 +220,74 @@ def checkAllDirectory():
 
 
 def settings():
-    console.print("[bold green]No encontramos ninguna configuración previa[/bold green]")
+
+    console.clear()
+    console.print("[bold green]GESTOR DE DIRECCIONES DE BASE DE DATOS SIPPBST[/bold green]")
+    console.print("Si estas viendo este mensaje es porque aun no has configurado \r\n la cadena de conexión o deseas configurar otra")
     console.print("[bold]Iniciando modo de configuración...[bold]")
-    server_name = Prompt.ask("[bold blue]•[/] Ingresa el nombre del server")
-    database_name = Prompt.ask("[bold blue]•[/] Ingresa el nombre de la base de datos")
+
+    #mostramos los drivers primero
     driver = showDrivers()
-    with open('config.json', 'w') as file:
-            json.dump([{"server_name": server_name, "database_name": database_name,"driver":driver}], file)
-    #verificamos que la carpeta de modelos exista
+
+    #pedimos que nos ingrese los valores de cada campo
+    Kvalues = []
+    for keyName in keys:
+        if keyName == 'DRIVER':
+            Kvalues.append(driver)
+        elif keyName == 'PASSWORD':
+            prompt = f'[bold blue]•[/] Ingresa el campo {keyName}'
+            value = Prompt.ask(prompt,password=True)
+            if value:
+                Kvalues.append(value)
+        else:
+            prompt = f'[bold blue]•[/] Ingresa el campo {keyName}'
+            value = Prompt.ask(prompt)
+            if value:
+                Kvalues.append(value)
+        idSection =  generateIDSections()
+
+    #una vez generado mandamos
+    generate_sections(INI_PATH,idSection,keys,Kvalues)
     prepareConection()
-    # return server_name, database_name
+
+def generateIDSections():
+    numero = random.randint(10, 99)
+    letra1 = random.choice(string.ascii_uppercase)
+    letra2 = random.choice(string.ascii_uppercase)
+    id_aleatorio = f"ID{numero}{letra1}{letra2}"
+    return id_aleatorio
+
+def generate_sections(file_name, region_name, keys, values=None):
+    config = configparser.ConfigParser()
+    try:
+        config.read(file_name)
+    except Exception as e:
+        print(f"Error al leer el archivo INI: {e}")
+
+    if region_name not in config:
+        config.add_section(region_name)
+
+    for i, key in enumerate(keys):
+        if values and i < len(values):
+            config.set(region_name, key, str(values[i]))
+        else:
+            config.set(region_name, key, "")
+
+    with open(file_name, 'w') as configfile:
+        config.write(configfile)
+    
+
+
 
 def showDrivers():
-    drivers_name = ["SQL Server", "MySQL", "PostgreSQL", "Oracle"]
-    drivers = ["ODBC Driver 17 for SQL Server", "MySQL ODBC 8.0 Unicode Driver", "PostgreSQL Unicode", "Oracle in XE"]
+    drivers = pyodbc.drivers()
     table = Table(title="Drivers disponibles")
     table.add_column("Opción", style="cyan")
     table.add_column("Driver", style="magenta")
-    for i, driver in enumerate(drivers_name, 1):
+    for i, driver in enumerate(drivers, 1):
         table.add_row(str(i), driver)
     console.print(table)
-    driver = Prompt.ask("[bold blue]•[/] Selecciona un driver", choices=[str(i) for i in range(1, len(drivers_name)+1)])
+    driver = Prompt.ask("[bold blue]•[/] Selecciona un driver", choices=[str(i) for i in range(1, len(drivers)+1)])
     driver = drivers[int(driver)-1]
     return driver
 
@@ -163,7 +299,7 @@ def showMenu():
 
 
 #Menu models
-def showSettingsModel(obj,sql_serverConfig,query):
+def showSettingsModel():
     contiNue = True
     path = './models'
     while contiNue:
@@ -171,8 +307,7 @@ def showSettingsModel(obj,sql_serverConfig,query):
         models_dir = os.listdir(path)
         console.rule("[bold green]Gestión de modelos[/bold green]")
         console.print("[bold green]A continuación se presenta una tabla con los modelos disponibles[/bold green]")
-        console.print("*** Seleccione un modelo para hacer la predicción ***")
-        # console.print("** Los modelos se encuentran dentro de carpetas, selecione una ***")
+        console.print("*** Seleccione un modelo para continuar ***")
         table = Table(title="Modelos disponibles")
         table.add_column("Opción", style="cyan")
         table.add_column("Modelo", style="magenta")
@@ -194,18 +329,30 @@ def showSettingsModel(obj,sql_serverConfig,query):
         model = Prompt.ask("[bold blue]•[/] Selecciona un modelo", choices=[str(i) for i in range(1, len(models_name)+1)])
         console.print(f"[bold green]Modelo seleccionado: [/]"+f"""[bold orange]{models_name[int(model)-1]}[/]""")
         model_path = models_path[int(model)-1]
-        console.print("[bold cyan]Ruta -> [/]"+model_path)
         contiNue = False
-        console.print("[bold green]Iniciando proceso de predicción[/] "+model_path)
-        obj.modelPredicFuncion(sql_serverConfig,query,12, model_path)
-        # console.print("[bold green] Proceso terminado con éxito [/]")
+        return model_path
 
+
+def predictingModel(obj, sql_serverConfig, query, steps, model_path):
+    console.print("[bold cyan]Ruta -> [/]"+model_path)
+    console.print("[bold green]Iniciando proceso de predicción[/] "+model_path)
+    obj.modelPredicFuncion(sql_serverConfig,query,steps, model_path)
+
+def retrainingModel(obj, sql_serverConfig, query, steps, model_path):
+    console.print("[bold cyan] Ruta -> [/]"+model_path)
+    console.print("[bold green] Iniciando proceso de Reentrenamiento... [/]")
+    obj.modelRetrainingFunction(sql_serverConfig,query,steps,model_path)
+    console.print("[bold green]✔ Modelo Reentrenado guardado con éxito [/]")
+    console.print("[bold green]✔ Proceso de Reentrenamiento finalizado... [/]")
 
 
 def main(salir = False):
 
     while salir == False:
-        initialyze()
+        console.clear()
+        vseleccion = intro()
+        engine, vstrConnection, query =  prepareConection(vseleccion)
+        setMode(vseleccion,engine,vstrConnection,query)
         console.print("[bold cyan]\n¿Desea salir del programa?[/bold cyan]")
         keyboard1 = Prompt.ask("[bold cyan]Presione [bold red]S[/bold red] para salir o cualquier otra tecla para continuar[/bold cyan]")
         if keyboard1 == "S" or keyboard1=="s":
