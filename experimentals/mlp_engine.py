@@ -1,5 +1,5 @@
 '''
-ENGINE V1.1
+MLP ENGINE V1.1
 
 Para esta versión, se hacen unas modificaciones, y distinciones de versiones pasadas:
 
@@ -25,14 +25,13 @@ from keras.models import Sequential
 from keras.models import load_model
 from keras.layers import Dense, Activation, Flatten, Dropout
 from keras.callbacks import EarlyStopping
-# from keras.optimizers import SGD, RMSprop
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.ensemble import IsolationForest
 import json
 
 
 
-class engine:
+class mlp_engine:
     def __init__(self, sql_serverConfig,query):
         self.query = query
         self.sql_server= sql_serverConfig
@@ -459,6 +458,7 @@ class engine:
             datos = self.set_index_datetime(datos)
 
             dirmodels_name = './models/'+datetime.now().strftime('%Y-%m-%d')
+            
             if not os.path.exists(dirmodels_name):
                 os.makedirs(dirmodels_name, exist_ok=True)
             
@@ -541,7 +541,7 @@ class engine:
             model_path = model_path_copy
             #----------------------------
 
-            #Creamos un directorio para guardar los datos del primer entrenamiento
+            # Creamos un directorio para guardar los datos del primer entrenamiento
             # path = model_path+"/trainedModel_dataPredict/"+datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
             path = model_path+"/trainedModel_dataPredict/"+str(productID)
             os.makedirs(path)
