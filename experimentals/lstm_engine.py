@@ -19,6 +19,8 @@ from datetime import date, datetime, timedelta
 from dateutil.relativedelta import relativedelta
 import matplotlib.pylab as plt
 import numpy as np
+import joblib
+import pickle
 from datetime import date, datetime, timedelta
 
 from keras.models import Sequential, load_model
@@ -32,19 +34,17 @@ from sklearn.preprocessing import MinMaxScaler, LabelEncoder
 
 
 
-class lstm_engine: 
-    def __init__(self, sql_server_config, query,query_products,
+class Lstm_engine: 
+    def __init__(self, 
                 pasos=180,
-                training_percentage=0.7,
+                training_percentage=0.9,
                 n_predictions = 31,
                 epochs = 30,
                 neurons = 100,
                 batch_size = 15,
                 isfloatdata = True,
                 ):
-        self.sql_server= sql_server_config
-        self.query = query
-        self.query_products = query_products
+        # self.sql_server= sql_server_config
         self.PASOS = pasos # No. DE OBSERVACIONES EN EL TIEMPO PARA LA DATA Y PARA ALGORITMO DE 'SLIDDING WINDOW'
         self.TRAINING_PERCENTAGE = training_percentage  #PORCENTAJE DE DATOS A TOMAR PARA ENTRENAMIENTO
         self.N_PREDICTIONS = n_predictions  #NUMERO DE PREDICCIONES A REALIZAR
@@ -53,18 +53,21 @@ class lstm_engine:
         self.BATCH_SIZE = batch_size #TAMANIO DE LAS MUESTRAS DE ENTRENAMIENTO
         self.ISFLOATDATA = isfloatdata #VARIABLE QUE CONVIERTE LOS DATOS A PUNTO FLOTANTE
 
-    def get_sqlconnection(self):
+    def set_index_datetime(self,data):
         """
-        Método para realizar conexión hacia el servidor de la base de datos de donde extraer la data
+        Elimina la columna numérica original y setea la nueva columna como index
         """
-        status = "inicializando...."
-        try: 
-            connection = pyodbc.connect(self.sql_server_config)
-            status = "Conexion establecida satisfactoriamente"
-        except Exception as e:
-            status = "Error al establecer la conexión:"+e
-        print(status)
-        return connection
+        if str(type(data) == "<class 'pandas.core.frame.DataFrame'>"):
+            # data.sort_values('fecha', inplace=True)
+            for column in data.columns: 
+                try: 
+                    pd.to_datetime(data[column])
+                    data.set_index(column,inplace=True)
+                    return data
+                except Exception as e:  
+                    pass
+        else: 
+            return 0
     
     def split_sequences(self,df, input_steps, output_steps, features, target):
         """
@@ -78,19 +81,36 @@ class lstm_engine:
             y.append(target_vals[i+input_steps:i+input_steps+output_steps])
         return np.array(X), np.array(y)
     
-    def saveMetadata(self,metadata,path):
-        metadata_path = path+'/metadata.json'
+    def saveMetadata(self,metadata,path, customNameMetadata=None, showMetadata=False):
+        """
+        Permite guardar la metadata en formato json, unicamente pasando la misma metadata
+        y el directorio padre.
+        """
+
+        if customNameMetadata != None: 
+            metadata_path = path+'/'+customNameMetadata+'.json'
+        else:
+            metadata_path = path+'/metadata.json'
+        
+        if showMetadata:
+            print(type(metadata))
+            print(metadata)
 
         with open(metadata_path, 'w') as file: 
-            json.dump(metadata)
+            json.dump(metadata,file, indent=4)
     
-    def tratamiento_datos(self,data, columns, features, target_col, new_col, productkeyIds,dataProduct, GROUP_ID, show_nan=False, show_data_output=False):
+    def tratamiento_datos(self,data, dictionary, show_nan=False, show_data_output=False):
         """
         Realiza una mejora y garantiza la secuencia temporal de los datos a manejar para LSTM
         """
 
         val = data.copy()
         val = val.reset_index()
+
+        GROUP_ID = dictionary['FORECAST_ID_COLUMN_ENCODED']
+        target_col = dictionary['TARGET_COLUMN']
+        new_col = dictionary['COLUMN_ADD']
+
         series_modified = []
 
         #obtener la fecha inicial
@@ -189,7 +209,7 @@ class lstm_engine:
         data_modified = pd.concat(series_modified)
         return data_modified
 
-    def create_x_y_train(self,data, new_col, var_columns, var_features, target_col, parameters, show_paremeters=False, steps=PASOS, n_predictions=N_PREDICTIONS):
+    def create_x_y_train(self,data, new_col, var_columns, var_features, target_col, parameters, show_paremeters=False, steps=0, n_predictions=0):
         """
         Método que divide la data en entrenamiento y validación
         Los escaladores son: 1 para la serie inicial, contemplando 12 columnas, 
@@ -202,7 +222,7 @@ class lstm_engine:
             print(var_features)
         
         #Creamos una copia de la data
-        values = data.copy()
+        # values = data.copy()
         temp = data.copy()
         values_y = data.copy()
 
@@ -221,20 +241,27 @@ class lstm_engine:
         df_train = data.iloc[:n_train_rows].copy()
         df_val = data.iloc[n_train_rows - steps - n_predictions + 1:].copy()  # Incluye pasos previos para ventana de validación
 
+        #Obtendremos el ProdutKeyEncoded
+        parameters['ID_FORECAST_ENC_VALUE'] = str(data['ProductKey_encoded'].iloc[0])
+
+        #generamos una copia de la data
+        df = df_val.copy()
+        df = df.drop(columns=['ProductKey_encoded','IsSelled'])
+
+        #Eliminar la columna de product key en validacion y entrenamiento
+        del_col = parameters['forecast_id_col']
+        df_train = df_train.drop(columns=[del_col], axis=1)
+        df_val = df_val.drop(columns=[del_col], axis=1)
+
         #añadir el total de elementos de entrenamiento al modelo
-        print(df_train.columns)
         parameters['DATOS_ENTRENAMIENTO'] = len(df_train)
-        parameters['LAST_DATE'] = '2021-03-04'
+        parameters['LAST_DATE'] = df_train.index.max().date()
+        parameters['DATOS_VALIDACION'] = len(df_val)
 
         scaler = MinMaxScaler(feature_range=(-1, 1))
 
         #generamos un escalador para las feature target 'Y'
         scaler_y = MinMaxScaler(feature_range=(-1, 1))
-
-        if self.ISFLOATDATA:
-            # Convertimos las columnas a punto flotante
-            values = values.astype('float32')
-            temp = temp.astype('float32')
 
         # Escalar train
         df_train[only_scaled] = scaler.fit_transform(df_train[only_scaled])
@@ -259,7 +286,7 @@ class lstm_engine:
 
         ####Visualizacion de parámetros#####
         if show_paremeters:
-            print("Data length: ",len(values)," (values)")
+            # print("Data length: ",len(values)," (values)")
             print("Num. Train Days: ",n_train_rows)
         ####################################
 
@@ -269,10 +296,9 @@ class lstm_engine:
             print(f"Tensors:  (X_val): {X_val.shape}, (y_val): {y_val.shape}")
         ####################################
 
-        return X_train, y_train, X_val, y_val, scaler_y, scaler,only_scaled, parameters
+        return X_train, y_train, X_val, y_val, scaler_y, scaler, only_scaled, df, parameters
 
     def train_model(self,x_train, y_train, x_val, y_val, model, model_path, scaler_y, parameters):
-    
         early_stop = EarlyStopping(monitor='val_mae', patience=5, restore_best_weights=True)
         history = model.fit(
             x_train, y_train,
@@ -325,7 +351,7 @@ class lstm_engine:
         plt.rcParams['axes.edgecolor'] = 'white'
         ### / ######
 
-        plt.figure(figsize=(12, 6))
+        plt.figure(figsize=(10, 5))
         plt.plot(y_val_plot, label='Valores Reales', color='g', linewidth=2)
         plt.plot(results_plot, label='Valores Pronosticados', color='orange', linewidth=2)
         plt.xlabel('Índice')
@@ -334,9 +360,9 @@ class lstm_engine:
         plt.legend()
         plt.grid(True, linestyle='--', alpha=0.5)
         plt.figtext(0.01, 0.01, "Realizado el: "+datetime.now().strftime('%H:%M:%S %d-%m-%Y'), fontsize=10, color="gray")
-        plt.figtext(0.60, 0.01, "Gestión de Innovación en Tecnología Informática S.C.P. | Grupo Consultores®", fontsize=10, color="gray")
+        plt.figtext(0.50, 0.01, "Gestión de Innovación en Tecnología Informática S.C.P. | Grupo Consultores®", fontsize=10, color="gray")
         plt.savefig(path+"/performance_validation_1.jpg",dpi=300)
-        plt.show()
+        plt.close()
 
         # Gráfico de pérdidas (loss) de entrenamiento y validación
         plt.figure(figsize=(10, 5))
@@ -348,7 +374,8 @@ class lstm_engine:
         plt.legend()
         plt.figtext(0.01, 0.01, "Realizado el: "+datetime.now().strftime('%H:%M:%S %d-%m-%Y'), fontsize=10, color="gray")
         plt.figtext(0.60, 0.01, "Gestión de Innovación en Tecnología Informática S.C.P. | Grupo Consultores®", fontsize=10, color="gray")
-        plt.show()
+        plt.savefig(path+"/performance_validation_2.jpg",dpi=300)
+        plt.close()
 
         # Gráfico de MSE de entrenamiento y validación (si está disponible)
         if 'mse' in history.history:
@@ -362,102 +389,284 @@ class lstm_engine:
             plt.legend()
             plt.figtext(0.01, 0.01, "Realizado el: "+datetime.now().strftime('%H:%M:%S %d-%m-%Y'), fontsize=10, color="gray")
             plt.figtext(0.60, 0.01, "Gestión de Innovación en Tecnología Informática S.C.P. | Grupo Consultores®", fontsize=10, color="gray")
-            plt.show()
+            plt.savefig(path+"/performance_validation_3.jpg",dpi=300)
+            plt.close()
 
         # Preparamos la data a guardar en metadata
         datetim_e = datetime.now().strftime('%H:%M:%S %d-%m-%Y')
         optimizer_model = model.optimizer.get_config()
-        model_summary = model.to_json()
+        # Obtener el resumen del modelo en formato JSON y formatearlo correctamente
+        model_summary = json.loads(model.to_json())
 
         metadata = [
             {
                 "MODEL_REFERENCY":{
                     "CATEGORY": parameters['category_id'],
-                    "ID": parameters['ID_model']
+                    "ID": parameters['ID_model'],
+                    "MODEL_NAME": parameters['MODEL_NAME']
                 }
             },
             {
-                "GENERAl_INFO":{
-                    "TOTAL_DE_DATOS": parameters['data_size'],
+                "GENERAL_INFO": {
+                    "DATOS_ENTRENAMIENTO": parameters['data_size'],
+                    "DATOS_VALIDACION":parameters['DATOS_VALIDACION'],
                     "EPOCH": len(history.history['loss']),
                     "FECHA_ENTRENAMIENTO": datetim_e,
-                    "FECHA_MODIFICACION": datetim_e
+                    "FECHA_MODIFICACION": datetim_e,
+                    "TECHNOLOGY": "LSTM",
+                    "ID_ENCODED": parameters['ID_FORECAST_ENC_VALUE'],
+                    "STEPS": str(self.PASOS),
+                    "PREDICTIONS_DEFAULT": str(self.N_PREDICTIONS)
                 }
             },
             {
-                "Model Architecture: ": model_summary
+                "MODEL_ARCHITECTURE": model_summary
             },
             {
                 "OPTIMIZER_CONFIG": optimizer_model
-            },
+            }
         ]
 
         #guardar la metadata
-        self.saveMetadata(metadata,path)
+        self.saveMetadata(metadata,model_path)
 
         return model
 
 
-    def newModelLSTM(self,n_features):
-        """
-        Función principal que crea la arquitectura y los modelos LSTM
-        """
-        dropout_rate = 0.2
+    def create_model(self,n_features):
         model = Sequential()
-        model.add(LSTM(self.NEURONS, input_shape=(self.PASOS, n_features), return_sequences= True))
+        model.add(Input(shape=(self.PASOS, n_features)))
+        model.add(LSTM(self.NEURONS, return_sequences=True))
         model.add(LSTM(int(self.NEURONS/2)))
-        model.add(Dense(self.NEURONS, activation='relu'))
-        model.add(Dropout(dropout_rate))
-        model.add(Dense(self.N_PREDICTIONS, activation='linear'))  
+        model.add(Dense(64, activation ='tanh'))
+        model.add(Dense(32, activation ='tanh'))
+        model.add(Dense(self.N_PREDICTIONS, activation ='linear'))
         model.compile(optimizer='adam', loss='mse', metrics=['mae'])
+        model.add(Reshape((self.N_PREDICTIONS, 1)))
         model.summary()
         return model
     
-
-    def predictions(self, model, df, features, n_features, scaler_y, steps=30):
+    def loadUtils(self, model_path,model_metadata, category_metadata):
         """
-        Función dedicada a realizar predicciones
+        Función que se encarga de recargar el modelo o reconstruirlo como estuvo originalmente
         """
-        # Seleccionar solo las columnas de features usadas por el modelo
-        temp_for_pred = df[features].tail(steps)
-        x_input = temp_for_pred.to_numpy().reshape((1, steps, n_features))
 
-        # Realizar la predicción multistep (la salida es de tamaño N_PREDICTIONS)
-        pred = model.predict(x_input, verbose=0)  # pred.shape = (1, N_PREDICTIONS) or (1, N_PREDICTIONS, 1)
+        enable = False
 
-        # Si pred es 3D, reducir a 2D
-        if pred.ndim == 3:
-            pred_2d = pred.reshape(pred.shape[0], pred.shape[1])
+        # Obtener el directorio padre 
+        root_dir = os.path.dirname(model_path)
+
+        # Utils dir
+        util_dir = root_dir+'/utils/'
+
+        # Cargar el CSV como dataframe
+        df = pd.read_csv(util_dir+'LSLDWINDOW.csv')
+
+        # Cargar los escaladores
+        Scaler_x = self.reloadScaler(util_dir+'Scaler_x.pkl')
+        Scaler_y = self.reloadScaler(util_dir+'Scaler_y.pkl')
+        only_scaled = self.reloadArray(util_dir+'only_scaled.pkl')
+
+        #Cargar el modelo
+        model = self.loadModel(model_path)
+
+        #renombrar 
+        dictionary = category_metadata
+
+        features = dictionary['FEATURES']
+        n_features = dictionary['N_FEATURES']
+        steps = int(model_metadata['GENERAL_INFO']['STEPS'])
+        p_default = int(model_metadata['GENERAL_INFO']['PREDICTIONS_DEFAULT'])
+
+        # Validar que todos los objetos se hayan cargado correctamente
+        if (
+            df is not None and not df.empty and
+            Scaler_x is not None and
+            Scaler_y is not None and
+            only_scaled is not None and
+            model is not None
+        ):
+            print("////// SE HAN CARGADO TODOS LOS ARCHIVOS NECESARIOS CORRECTAMENTE //////")
+            print("Scaler x: ",type(Scaler_x))
+            print("Scaler y: ",type(Scaler_y))
+            print("Only_scaled: ",type(only_scaled))
+            enable = True
         else:
-            pred_2d = pred
-        
-        y_pred_inv = scaler_y.inverse_transform(pred_2d)  # y_pred_inv.shape = (1, N_PREDICTIONS)
-        
-        # Distribuir las predicciones individuales en la lista
-        predicciones = y_pred_inv.flatten().tolist()
+            print("////// NO TODOS LOS ARCHIVOS SE CARGARON CORRECTAMENTE //////")
 
-        return predicciones
+        if enable:
+            #Cambiar el nomnbre del index
+            df = df.rename(columns={"index": "Date"})
+
+            # Convertir a tipo dataframe la columna Date
+            df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+
+            df = self.set_index_datetime(df)
+
+            #ordenamos la data por product key
+            df = df.sort_values([dictionary['FORECAST_ID_COLUMN'], 'Date'])
+            
+            #Codificamos el productKey a labelEncoder
+            df[dictionary['FORECAST_ID_COLUMN_ENCODED']] = model_metadata['GENERAL_INFO']['ID_ENCODED']
+
+            # Hacemos tratamiento de datos
+            data_trat = self.tratamiento_datos(df, category_metadata)
+
+            # Realizamos la prediccion
+            predicciones, last_date = self.predictions(model, data_trat, features, n_features, Scaler_y, steps, 64, Scaler_x, p_default)
+            
+            # Generar rango de fechas futuras a partir de last_date
+            future_dates = pd.date_range(start=last_date + timedelta(days=1), periods=len(predicciones), freq='D')
+            
+            # Crear DataFrame para visualizar fechas y predicciones juntas
+            pred_df = pd.DataFrame({
+                'Fecha': future_dates,
+                'Prediccion': predicciones
+            })
+
+            # Obtener histórico de ventas reales
+            historico_df = data_trat[['OrderQuantity']].copy()
+            historico_df = historico_df.reset_index().rename(columns={'index': 'Fecha'})
+            historico_df = historico_df[['Fecha', 'OrderQuantity']]
+
+            # Graficar histórico y predicciones
+            plt.figure(figsize=(12, 6))
+            plt.plot(historico_df['Fecha'], historico_df['OrderQuantity'], label='Histórico Ventas (OrderQuantity)', color='g', linewidth=2)
+            plt.plot(pred_df['Fecha'], pred_df['Prediccion'], marker='o', color='orange', label='Predicción', linewidth=2)
+            plt.xlabel('Fecha')
+            plt.ylabel('Ventas')
+            plt.title('Histórico de Ventas y Predicciones Futuras')
+            plt.legend()
+            plt.grid(True, linestyle='--', alpha=0.5)
+            plt.tight_layout()
+            plt.show()
+
+            # Graficar las predicciones
+            # plt.figure(figsize=(10, 5))
+            # plt.plot(pred_df['Fecha'], pred_df['Prediccion'], marker='o', color='orange', label='Predicción')
+            # plt.xlabel('Fecha')
+            # plt.ylabel('Predicción')
+            # plt.title('Predicciones futuras')
+            # plt.legend()
+            # plt.grid(True, linestyle='--', alpha=0.5)
+            # plt.tight_layout()
+            # plt.show()
 
 
-    def createModels(self, df_lst, productKeyIds, col_gby, columns, n_features, new_col, features, target_col, category_id, forecast_id_col, dirmodels_name):
+    
+    def reloadScaler(self,path):
+        """
+        Función que permite recuperar escaladores usando Joblib
+        """
+        load_scaler = joblib.load(path)
+        return load_scaler
+    
+    def reloadArray(self,path):
+        """
+        Función que permite recuperar array usando pickle
+        """
+        with open(path, "rb") as f:
+            load_scaler = pickle.load(f)
+        return load_scaler
+    
+    def loadModel(self, model_path):
+        """
+        Función que permite recuperar modelos LSTM
+        """
+        model = load_model(model_path)
+        model.summary()
+        return model
+
+    def predictions(self, model, df, features, n_features, scaler_y, steps=180, predictions=31, scaler_x=None, n_steps_model=None):
+        """
+        Realiza predicciones multistep, permitiendo encadenar predicciones si se requieren más pasos que los que el modelo predice por llamada.
+        """
+        # Determinar cuántos pasos predice el modelo por llamada
+        if n_steps_model is None:
+            try:
+                dummy_input = np.zeros((1, steps, n_features))
+                pred_shape = model.predict(dummy_input, verbose=0).shape
+                if len(pred_shape) == 3:
+                    n_steps_model = pred_shape[1]
+                else:
+                    n_steps_model = pred_shape[-1]
+            except Exception:
+                n_steps_model = predictions  # fallback
+        total_steps = predictions
+        preds = []
+
+        # Usar las últimas 'steps' filas como ventana inicial
+        temp_for_pred = df[features].tail(steps).copy()
+
+        last_date = df.index.max().date()
+
+        # Escalar los datos de entrada si se proporciona scaler_x
+        if scaler_x is not None:
+            temp_for_pred[features] = scaler_x.fit_transform(temp_for_pred[features])
+
+        for _ in range(0, total_steps, n_steps_model):
+            # Preparar input
+            x_input = temp_for_pred.to_numpy().reshape((1, steps, n_features))
+            pred = model.predict(x_input, verbose=0)
+            # Si pred es 3D, reducir a 2D
+            if pred.ndim == 3:
+                pred_2d = pred.reshape(pred.shape[0], pred.shape[1])
+            else:
+                pred_2d = pred
+            # Inversa de la escala
+            y_pred_inv = scaler_y.inverse_transform(pred_2d)
+            # Tomar solo los pasos requeridos en esta iteración
+            n_to_take = min(n_steps_model, total_steps - len(preds))
+            preds.extend(y_pred_inv.flatten()[:n_to_take].tolist())
+            # Para la siguiente iteración, agregar las nuevas predicciones al final de la ventana
+            # y quitar del inicio para mantener el tamaño de la ventana
+            if len(preds) >= total_steps:
+                break
+            # Crear un nuevo DataFrame para la ventana siguiente
+            # Rellenar las columnas de features, solo la columna target se actualiza con la predicción
+            # Suponemos que la columna target es la última de features
+            temp_for_pred = pd.concat(
+                [temp_for_pred,
+                 pd.DataFrame(
+                    np.zeros((n_to_take, n_features)),
+                    columns=features
+                 )],
+                ignore_index=True
+            )
+            # Insertar las predicciones en la columna target
+            target_col = features[-1]
+            temp_for_pred.iloc[-n_to_take:, temp_for_pred.columns.get_loc(target_col)] = y_pred_inv.flatten()[:n_to_take]
+            # Mantener solo las últimas 'steps' filas
+            temp_for_pred = temp_for_pred.tail(steps).reset_index(drop=True)
+            # Si scaler_x existe, volver a escalar la ventana (excepto la columna target, que ya está en escala original)
+            if scaler_x is not None:
+                temp_for_pred[features] = scaler_x.fit_transform(temp_for_pred[features])
+
+        return preds[:total_steps], last_date
+
+
+    def createModels(self, df_lst, productKeyIds, dictionary):
         """
         Función que crea los modelos conforme a cada producto
         Para este caso, se toman cada uno de los productos en una columna de productkey, se crean y se van entrenando cada uno
         de los modelos
         """
 
-        n_products = len(productKeyIds)
-        category_id = 'CAT'+category_id
+        col_gby = dictionary['FORECAST_ID_COLUMN']
 
-        print("Total de modelos a crear: ", n_products)
+        n_products = len(productKeyIds)
+        category_id = 'CAT'+dictionary['CATEGORY_ID']
+        new_col = dictionary['COLUMN_ADD']
+        features = dictionary['FEATURES']
+        target_col = dictionary['TARGET_COLUMN']
 
         #Agrupamos por ProductKey
         seriesGB = df_lst.groupby(col_gby)
-        all_columns_l = columns.copy()
+        all_columns_l = dictionary['ALL_COLUMNS'].copy()
         all_columns_l.remove(col_gby)
 
         #obtener el directorio actual y crear dentro de la carpeta models 
-        path = dirmodels_name+'/'+category_id
+        path = dictionary['MODEL_PATH_DIR']+'/'+category_id
 
         # ----------- CREACION DE CARRPETAS -------------
         #Creamos la carpeta padre
@@ -467,7 +676,7 @@ class lstm_engine:
         os.makedirs(path, exist_ok=True)
         # ----------- / -------------
 
-        models_dir = []
+        models_dir = {}
 
         #Por cada producto
         for pk in productKeyIds:
@@ -477,7 +686,7 @@ class lstm_engine:
 
             parameters = {
             'category_id': category_id,
-            'ID_model': pk
+            'ID_model': str(pk)
             }
 
             #generamos un nombre para el modelo
@@ -485,133 +694,191 @@ class lstm_engine:
             os.makedirs(dirmodelpath, exist_ok=True)
 
             # Creamos un modelo LSTM
-            model = self.create_model(n_features)
+            model = self.create_model(dictionary['N_FEATURES'])
 
             # Obtener data de acuerdo al product key
             pkSeries = seriesGB.get_group(str(pk)).copy()
 
-            # Eliminar la columna de productkey
-            pkSeries = pkSeries.drop([forecast_id_col], axis=1)
+            # Aniadir la columna de productkey
+            parameters['forecast_id_col'] = col_gby
 
             # Obtenemos el total de la data
             tt = int(len(pkSeries))
 
+            parameters['data_size'] = str(tt)
+
+            #nombre para el modelo
+            model_name = f'mod{pk}-{category_id}'
+            model_path = dirmodelpath+f'/{model_name}.keras'
+
+            #guardamos en parametros
+            parameters['MODEL_NAME'] = model_name
+
             # Pasamos por create x_y_train
-            x_train, y_train, x_val, y_val, scaler_y, scaler, only_scaled, parameters = self.create_x_y_train(pkSeries, new_col, all_columns_l, features, target_col, parameters, True)
+            x_train, y_train, x_val, y_val, scaler_y, scaler,  only_scaled, df_val, parameters = self.create_x_y_train(pkSeries, new_col, all_columns_l, features, target_col, parameters, True,self.PASOS,self.N_PREDICTIONS)
 
             # Entrenamos el modelo y obtenemos su rendimiento y acuracy
-            model = self.train_model(x_train,y_train,x_val,y_val, model, scaler_y, parameters)
+            model = self.train_model(x_train,y_train,x_val,y_val, model, dirmodelpath, scaler_y, parameters)
 
             # Guardamos el modelo
-            model_name = dirmodelpath+f'/mod{pk}-cat{category_id}.keras'
-            model.save(model_name)
+            model.save(model_path)
+
+            # Creamos una carpeta donde guardar los escaladores
+            utils_path = dirmodelpath+'/utils'
+            os.makedirs(utils_path, exist_ok=True)
+
+            # Guardamos el dataframe
+            name = utils_path+f'/LSLDWINDOW.csv'
+            df_val.to_csv(name,index=True)
+
+            # Generamos una metadata para el csv
+            metadata = [
+                {
+                    "NAME":"LSLDWINDOW.csv",
+                    "LAST_MODIFIED": datetime.now().strftime("%H_%M_%S-%d-%m-%Y"),
+                    "LAST_REGISTERED_DATE": str(df_val.index.max()),
+                    "HISTORIC_DATA_SIZE": str(len(df_val))
+                }
+            ]
+
+            self.saveMetadata(metadata,utils_path)
+
+            #Guardamos el scaler x
+            name = utils_path+"/Scaler_x.pkl"
+            joblib.dump(scaler,name)
+
+            #guardamos el scaler y
+            name = utils_path+"/Scaler_y.pkl"
+            joblib.dump(scaler_y, name)
+
+            #Guardamos only_scaled
+            name = utils_path+"/only_scaled.pkl"
+            with open(name, 'wb') as f:
+                pickle.dump(only_scaled, f)
 
             # regustramos la ubicación del modelo
-            models_dir[pk] = model_name
+            models_dir[int(pk)] = model_name
+
+            #eliminamos todo lo que habia en parametros
+            parameters = {}
+
+            if pk == 234:
+                break
 
         return models_dir
     
     #Core o función con flujo de secuencias establecido por defecto
-    def main(self,category_id):
-        with self.get_sqlconnection(self.sql_server) as cursor: 
-            prepData = pd.read_sql_query(self.query,cursor)
-            historyData = pd.read_sql_query(self.query2, cursor)
-            copyprepData = prepData
-            copyprepData = self.set_index_datetime(copyprepData)
-            historyData = self.set_index_datetime(historyData)
+    def main(self,category_id,data, data_Product):
+        dataProduct = data_Product.copy()
+        prepData = data.copy()
+        category_id_1 = category_id
+        print(category_id_1)
+        
+        # historyData = pd.read_sql_query(self.query2, cursor)
+        copyprepData = prepData
+        copyprepData = self.set_index_datetime(copyprepData)
+        # historyData = self.set_index_datetime(historyData)
 
-            #----------- SECCION DE PARÁMETROS GENERALES ----------
-            # Obtenemos el path del modelo
-            dirmodels_name = './models/'+datetime.now().strftime('%Y-%m-%d')
+        #----------- SECCION DE PARÁMETROS GENERALES ----------
+        # Obtenemos el path del modelo
+        dirmodels_name = './models/'+datetime.now().strftime('%Y-%m-%d')
 
-            # Identificar la columna que identifique a cada serie temporal
-            forecast_id_col = 'ProductKey'
+        # Identificar la columna que identifique a cada serie temporal
+        # forecast_id_col = 'ProductKey'
 
-            forecast_id_col_enc = 'ProductKey_encoded'
+        # forecast_id_col_enc = 'ProductKey_encoded'
 
-            # Columna que deseamos predecir
-            target_col = 'OrderQuantity'
+        # # Columna que deseamos predecir
+        # target_col = 'OrderQuantity'
 
-            # Generamos una columna para detectar si hay ventas o no
-            isSelledCol = 'IsSelled'
-            #----------- / ----------
+        # # Generamos una columna para detectar si hay ventas o no
+        # isSelledCol = 'IsSelled'
 
-            #Creamos la carpeta
-            if not os.path.exists(dirmodels_name):
-                os.makedirs(dirmodels_name, exist_ok=True)
+        dictionary = {
+            "FORECAST_ID_COLUMN": "ProductKey",
+            "FORECAST_ID_COLUMN_ENCODED": "ProductKey_encoded",
+            "TARGET_COLUMN": "OrderQuantity",
+            "COLUMN_ADD": "IsSelled",
+            "CATEGORY_ID": category_id
+        }
+        #----------- / ----------
 
-            #Creamos una subcarpeta con la fecha y hora
+        #Creamos la carpeta
+        if not os.path.exists(dirmodels_name):
+            os.makedirs(dirmodels_name, exist_ok=True)
 
-            path_model = dirmodels_name+f'/CAT_{category_id}-'+datetime.now().strftime('%H:%M:%S %d-%m-%Y')
-            os.makedirs(path_model, exist_ok=True)
+        path_model = dirmodels_name+f'/CAT_{category_id}-'+datetime.now().strftime('%H_%M_%S %d-%m-%Y')
+        os.makedirs(path_model, exist_ok=True)
+        dictionary['MODEL_PATH_DIR'] = path_model
 
-            #ordenamos la data por product key
-            df = prepData.sort_values([forecast_id_col, 'Date'])
+        #ordenamos la data por product key
+        df = prepData.sort_values([dictionary['FORECAST_ID_COLUMN'], 'Date'])
 
-            #Creamos la copia del dataframe
-            dfg = df.copy()
+        #Creamos la copia del dataframe
+        dfg = df.copy()
 
-            #obtenemos la lista de los elementos
-            productKeyIds = dfg[forecast_id_col].unique()
+        #obtenemos la lista de los elementos
+        productKeyIds = dfg[dictionary['FORECAST_ID_COLUMN']].unique()
 
-            #convertir ProductKey a String
-            df[forecast_id_col] = df[forecast_id_col].astype(str)
+        #convertir ProductKey a String
+        df[dictionary['FORECAST_ID_COLUMN']] = df[dictionary['FORECAST_ID_COLUMN']].astype(str)
 
-            #label encoder
-            le = LabelEncoder()
+        #label encoder
+        le = LabelEncoder()
 
-            #Codificamos el productKey a labelEncoder
-            df[forecast_id_col_enc] = le.fit_transform(df[forecast_id_col])
+        #Codificamos el productKey a labelEncoder
+        df[dictionary['FORECAST_ID_COLUMN_ENCODED']] = le.fit_transform(df[dictionary['FORECAST_ID_COLUMN']])
 
-            #generamos una lista de las 'x_features'
-            features = list(df.columns.copy())
+        #generamos una lista de las 'x_features'
+        features = list(df.columns.copy())
+        dictionary['FEATURES'] = features
 
-            #agregamos la nueva columna
-            features.append(isSelledCol)
+        #agregamos la nueva columna
+        features.append(dictionary['COLUMN_ADD'])
 
-            #obtenemos una copia de todas las columnas
-            all_columns = features.copy()
+        #obtenemos una copia de todas las columnas
+        all_columns = features.copy()
+        dictionary['ALL_COLUMNS'] = all_columns
 
-            #eliminamos la columna target
-            features.remove(target_col)
+        #eliminamos la columna target
+        features.remove(dictionary['TARGET_COLUMN'])
 
-            #Eliminamos la columna del productkey
-            features.remove(forecast_id_col)
+        #Eliminamos la columna del productkey
+        features.remove(dictionary['FORECAST_ID_COLUMN'])
 
-            #Preparar la columna de dia
-            first_day = copyprepData.index.min() + timedelta(days=1)
-            last_day = copyprepData.index.max() + timedelta(days=1)
-            future_days = [last_day + timedelta(days=i) for i in range(self.N_PREDICTIONS)]
-            for i in range(len(future_days)):
-                future_days[i] = str(future_days[i])[:10]
-            
-            #De momento solamente será la fecha
-            future_data = pd.DataFrame(future_days, columns=['fecha'])
+        # #Preparar la columna de dia
+        # first_day = copyprepData.index.min() + timedelta(days=1)
+        # last_day = copyprepData.index.max() + timedelta(days=1)
+        # future_days = [last_day + timedelta(days=i) for i in range(self.N_PREDICTIONS)]
+        # for i in range(len(future_days)):
+        #     future_days[i] = str(future_days[i])[:10]
+        
+        # #De momento solamente será la fecha
+        # future_data = pd.DataFrame(future_days, columns=['fecha'])
 
-            #obtenemos el total de features con las que se hará el entrenamiento del modelo
-            n_features = int(len(features))
+        #obtenemos el total de features con las que se hará el entrenamiento del modelo
+        n_features = int(len(features))
+        dictionary['N_FEATURES'] = n_features
 
-            # antes de iniciar, hacer una consulta para obtener mediante productKey, el standar cost y el precio del producto
-            with self.get_sqlconnection(self.sql_server) as cursor: 
-                dataProduct = pd.read_sql_query(self.query_products,cursor)
+        # Filtrar productos que están en la serie temporal
+        dataProduct = dataProduct[dataProduct[dictionary['FORECAST_ID_COLUMN']].isin(productKeyIds)]
 
-            # Filtrar productos que están en la serie temporal
-            dataProduct = dataProduct[dataProduct[forecast_id_col].isin(productKeyIds)]
+        #Haremos tratamiento de datos
+        data_trat = self.tratamiento_datos(df, dictionary)
 
-            #Haremos tratamiento de datos
-            data_trat = self.tratamiento_datos(df, all_columns,features,target_col,isSelledCol,productKeyIds,dataProduct,forecast_id_col_enc)
+        #Hacer creacion de los modelos y guardar 
+        models_dir = self.createModels(data_trat,productKeyIds,dictionary)
 
-            #Hacer creacion de los modelos y guardar 
-            models_dir = self.createModels(data_trat,productKeyIds,forecast_id_col,all_columns,n_features,isSelledCol,features,target_col,category_id,forecast_id_col,path_model)
+        #Guardar como metadata la direccion de los modelos pertenecientes a esa categoría
+        metadata = [
+            {
+                "CATEGORY_ID": str(category_id),
+                "Cantidad de modelos": str(len(models_dir))
+            },
+            models_dir,
+            dictionary
+        ]
 
-            #Guardar como metadata la direccion de los modelos pertenecientes a esa categoría
-            metadata = [
-                {
-                    "CATEGORY_ID":category_id,
-                    "Cantidad de modelos": len(models_dir)
-                },
-                models_dir
-            ]
+        #Guardamos la información sobre las direcciones de los modelos
+        self.saveMetadata(metadata,path_model,'metadata_CAT')
 
-            #Guardamos la información sobre las direcciones de los modelos
-            self.saveMetadata(metadata,path_model)

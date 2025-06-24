@@ -31,29 +31,15 @@ import json
 
 
 
-class mlp_engine:
-    def __init__(self, sql_serverConfig,query):
-        self.query = query
-        self.sql_server= sql_serverConfig
+class Mlp_engine:
+    def __init__(self, sql_serverConfig):
         self.PASOS = 31
         self.EPOCHS = 100
         self.NEURONS = 31
         self.TRAINING_PERCENTAGE = 0.8
-        print(sql_serverConfig)
-
-    def get_sqlconnection(self, config_sqlServer):
-        status = "inicializando...."
-        try: 
-            connection = pyodbc.connect(config_sqlServer)
-            status = "Conexion establecida satisfactoriamente"
-        except Exception as e:
-            status = "Error al establecer la conexión:"+e
-        print(status)
-        return connection
 
     def set_index_datetime(self,data):
         if str(type(data) == "<class 'pandas.core.frame.DataFrame'>"):
-            # data.sort_values('fecha', inplace=True)
             for column in data.columns: 
                 try: 
                     pd.to_datetime(data[column])
@@ -109,7 +95,6 @@ class mlp_engine:
         model.add(Dropout(0.3)) 
         model.add(Flatten())
         model.add(Dense(1, activation='linear'))
-        # model.compile(loss='mean_absolute_error',  optimizer=SGD(learning_rate=0.01, momentum=0.9),metrics=['mse', 'mae'])
         model.compile(loss='mean_absolute_error',  optimizer='Adam',metrics=['mse', 'mae'])
         model.summary()
         return model
@@ -447,125 +432,121 @@ class mlp_engine:
 
     #Funciones nuevas para reentrenamiento================
 
-    def main(self):
+    def main(self, data):
         '''
         NOTA: CUANDO EL SISTEMA ENTRENA POR PRIMERA VEZ, LA CANTIDAD DE NEURONAS, BACH_SIZE, CANTIDA DE DÍAS, PREDICCIONES DE PRUEBA
         SERÁN POR DEFECTO 31, CUANDO SE HACE LA PPREDICCIÓN, ESTOS PARÁMETROS PUEDEN CAMBIAR
         '''
         #Core
-        with self.get_sqlconnection(self.sql_server) as cursor:
-            datos = pd.read_sql_query(self.query, cursor)
-            datos = self.set_index_datetime(datos)
+        datos = data.copy()
+        datos = self.set_index_datetime(datos)
 
-            dirmodels_name = './models/'+datetime.now().strftime('%Y-%m-%d')
-            
-            if not os.path.exists(dirmodels_name):
-                os.makedirs(dirmodels_name, exist_ok=True)
-            
-            #Modulo que controla si es en días o en meses
-            try: 
-                #si se trata de dias
-                print("Days_format_detected")
-                first_day = datos.index.min() + timedelta(days=1)
-                last_day = datos.index.max() + timedelta(days=1)
-                future_days = [last_day + timedelta(days=i) for i in range(self.PASOS)]
-                for i in range(len(future_days)):
-                    future_days[i] = str(future_days[i])[:10]
-            except Exception as e: 
-                #Si se trata de meses
-                first_day = datetime.strptime(datos.index.min(),'%Y-%m') + relativedelta(months=1)
-                last_day = datetime.strptime(datos.index.max(), '%Y-%m' ) + relativedelta(months=1)
-                future_days = [last_day + relativedelta(months=i) for i in range(self.PASOS)]
-                for i in range(len(future_days)):
-                    future_days[i] = str(future_days[i])[:7]
-                print("Month_format_detected")
-            #MD
-            
-            future_data = pd.DataFrame(future_days, columns=['fecha'])
-            model = self.crear_modeloFF()
-            
-            # CREAMOS DOS CARPETAS: UNO PARA GUARDAR EL MODELO Y OTRO PARA GUARDAR EL SLD WINDOW
-            datetim_e = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-            model_path = dirmodels_name+"/model-training"+datetim_e
+        dirmodels_name = './models/'+datetime.now().strftime('%Y-%m-%d')
+        
+        if not os.path.exists(dirmodels_name):
+            os.makedirs(dirmodels_name, exist_ok=True)
+        
+        #Modulo que controla si es en días o en meses
+        try: 
+            #si se trata de dias
+            first_day = datos.index.min() + timedelta(days=1)
+            last_day = datos.index.max() + timedelta(days=1)
+            future_days = [last_day + timedelta(days=i) for i in range(self.PASOS)]
+            for i in range(len(future_days)):
+                future_days[i] = str(future_days[i])[:10]
+        except Exception as e: 
+            #Si se trata de meses
+            first_day = datetime.strptime(datos.index.min(),'%Y-%m') + relativedelta(months=1)
+            last_day = datetime.strptime(datos.index.max(), '%Y-%m' ) + relativedelta(months=1)
+            future_days = [last_day + relativedelta(months=i) for i in range(self.PASOS)]
+            for i in range(len(future_days)):
+                future_days[i] = str(future_days[i])[:7]
+        #MD
+        
+        future_data = pd.DataFrame(future_days, columns=['fecha'])
+        model = self.crear_modeloFF()
+        
+        # CREAMOS DOS CARPETAS: UNO PARA GUARDAR EL MODELO Y OTRO PARA GUARDAR EL SLD WINDOW
+        datetim_e = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        model_path = dirmodels_name+"/model-training"+datetim_e
+        #----------------------------
+        model_path_copy = model_path
+        #----------------------------
+        os.makedirs(model_path, exist_ok=True)
+        #si hay más de un producto
+        fathers_Mdir = model_path+'/artifacts'
+        productID = 12
+        #---------
+
+        data = []
+        for column in datos.columns:
             #----------------------------
-            model_path_copy = model_path
+            name_column = fathers_Mdir+ f'/{productID}'
+            model_path = name_column
             #----------------------------
-            os.makedirs(model_path, exist_ok=True)
-            #si hay más de un producto
-            fathers_Mdir = model_path+'/artifacts'
-            productID = 12
-            #---------
-
-            data = []
-            for column in datos.columns:
-                #----------------------------
-                name_column = fathers_Mdir+ f'/{productID}'
-                model_path = name_column
-                #----------------------------
-                
-                #nota: se guarda en la misma direccion donde se encuentra la metadata, el modelo entrenado
-                data = datos.filter([column])
-                data.set_index(datos.index, inplace=True)
-                data = self.eliminar_anomalias(data)
-                x_train, y_train, x_val, y_val, scaler, values = self.create_x_y_train(data)
-                # model, x_test = self.entrenar_modelo(x_train, y_train, x_val, y_val, scaler, values, data, model,model_path,'t')
-                #----------------------------
-                model, x_test = self.entrenar_modelo(x_train, y_train, x_val, y_val, scaler, values, data, model,model_path,'t',productID)
-                #guardar x_test
-                L_sld_window = model_path+'/LSLDWINDOW.npy'
-                np.save(L_sld_window,x_test)
-                #----------------------------
-                results = []
-                for i in range(self.PASOS):
-                    parcial = model.predict(x_test)
-                    results.append(parcial[0])
-                    x_test = self.agregarNuevoValor(x_test, parcial[0])
-                adimen = [x for x in results]
-                inverted = scaler.inverse_transform(adimen)
-                future_data[column]= inverted.astype(int)
-
-                #----------------------------
-                datetim_e = str(productID)
-                #----------------------------
-                
-                #Continuacion para guardar el modelo
-                model_name = model_path+'/model_training-'+datetim_e+'.keras'
-                model.save(model_name)
-
-            future_data = self.set_index_datetime(future_data)
-
-            datos.index = pd.to_datetime(datos.index)
-            future_data.index = pd.to_datetime(future_data.index)
+            
+            #nota: se guarda en la misma direccion donde se encuentra la metadata, el modelo entrenado
+            data = datos.filter([column])
+            data.set_index(datos.index, inplace=True)
+            data = self.eliminar_anomalias(data)
+            x_train, y_train, x_val, y_val, scaler, values = self.create_x_y_train(data)
+            # model, x_test = self.entrenar_modelo(x_train, y_train, x_val, y_val, scaler, values, data, model,model_path,'t')
+            #----------------------------
+            model, x_test = self.entrenar_modelo(x_train, y_train, x_val, y_val, scaler, values, data, model,model_path,'t',productID)
+            #guardar x_test
+            L_sld_window = model_path+'/LSLDWINDOW.npy'
+            np.save(L_sld_window,x_test)
+            #----------------------------
+            results = []
+            for i in range(self.PASOS):
+                parcial = model.predict(x_test)
+                results.append(parcial[0])
+                x_test = self.agregarNuevoValor(x_test, parcial[0])
+            adimen = [x for x in results]
+            inverted = scaler.inverse_transform(adimen)
+            future_data[column]= inverted.astype(int)
 
             #----------------------------
-            model_path = model_path_copy
+            datetim_e = str(productID)
             #----------------------------
-
-            # Creamos un directorio para guardar los datos del primer entrenamiento
-            # path = model_path+"/trainedModel_dataPredict/"+datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-            path = model_path+"/trainedModel_dataPredict/"+str(productID)
-            os.makedirs(path)
             
-            #Configuracion de las imagenes
-            plt.rcParams['figure.figsize' ] = (16, 9)
-            plt.style.use('fast')
+            #Continuacion para guardar el modelo
+            model_name = model_path+'/model_training-'+datetim_e+'.keras'
+            model.save(model_name)
 
-            #Graficar los dataframes
-            for i in range(len(datos.columns)):
-                data = datos[datos.columns[i]][:]
-                plt.plot(data.index, data,label='Historial {p0} - {p1}'.format(p0=str(first_day.year),p1=str(last_day.year-1)))
-                plt.plot(future_data.index, future_data[future_data.columns[i]], label='Predicción {p0}'.format(p0=str(last_day.year)))
-                # xtics = data.index.union(future_data.index)[::6]
+        future_data = self.set_index_datetime(future_data)
+        datos.index = pd.to_datetime(datos.index)
+        future_data.index = pd.to_datetime(future_data.index)
 
-                plt.xlabel('Fecha')
-                plt.ylabel('Ventas')
-                plt.title('Predicción de la demanda de {p0} para el año del {p1}'.format(p0=datos.columns[i],p1=str(last_day.year-1)))
-                plt.legend()
-                plt.figtext(0.01, 0.01, "Realizado el: "+datetime.now().strftime('%H:%M:%S %d-%m-%Y'), fontsize=10, color="gray")
-                plt.figtext(0.60, 0.01, "Gestión de Innovación en Tecnología Informática S.C.P | Grupo Consultores®", fontsize=10, color="gray")
-                name = path+'/GraphicalPrediction_on_'+str(datos.columns[i])+".jpg"
-                plt.savefig(name, dpi=300)
-                plt.close()  # Cerrar la figura para liberar memoria
+        #----------------------------
+        model_path = model_path_copy
+        #----------------------------
+
+        # Creamos un directorio para guardar los datos del primer entrenamiento
+        # path = model_path+"/trainedModel_dataPredict/"+datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        path = model_path+"/trainedModel_dataPredict/"+str(productID)
+        os.makedirs(path)
+        
+        #Configuracion de las imagenes
+        plt.rcParams['figure.figsize' ] = (16, 9)
+        plt.style.use('fast')
+
+        #Graficar los dataframes
+        for i in range(len(datos.columns)):
+            data = datos[datos.columns[i]][:]
+            plt.plot(data.index, data,label='Historial {p0} - {p1}'.format(p0=str(first_day.year),p1=str(last_day.year-1)))
+            plt.plot(future_data.index, future_data[future_data.columns[i]], label='Predicción {p0}'.format(p0=str(last_day.year)))
+            # xtics = data.index.union(future_data.index)[::6]
+
+            plt.xlabel('Fecha')
+            plt.ylabel('Ventas')
+            plt.title('Predicción de la demanda de {p0} para el año del {p1}'.format(p0=datos.columns[i],p1=str(last_day.year-1)))
+            plt.legend()
+            plt.figtext(0.01, 0.01, "Realizado el: "+datetime.now().strftime('%H:%M:%S %d-%m-%Y'), fontsize=10, color="gray")
+            plt.figtext(0.60, 0.01, "Gestión de Innovación en Tecnología Informática S.C.P | Grupo Consultores®", fontsize=10, color="gray")
+            name = path+'/GraphicalPrediction_on_'+str(datos.columns[i])+".jpg"
+            plt.savefig(name, dpi=300)
+            plt.close()  # Cerrar la figura para liberar memoria
 
 
 
