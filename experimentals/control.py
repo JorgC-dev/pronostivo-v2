@@ -169,7 +169,7 @@ def setMode(mode, v_connection=None, sql_serverConfig=None):
                     query = file.read()
                     console.print("[bold green] Validando contenido...[/]") 
                 if query:
-                    mlp_engine = Mlp_engine(sql_serverConfig)
+                    mlp_engine = Mlp_engine()
                     data = v_connection.getSQL(query, console)
                     mlp_engine.main(data)
             elif vseleccion == "LSTM(Long Short Term Memory)":
@@ -204,18 +204,27 @@ def setMode(mode, v_connection=None, sql_serverConfig=None):
             
             #determinar la tecnología a usar
             if model_metadata['GENERAL_INFO']['TECHNOLOGY'] == "LSTM":
-                Lstm_engine().loadUtils(model_path,model_metadata, category_metadata)
-            elif model_metadata['TECHNOLOGY'] == "MLP":
-                predictingModel(model_metadata['TECHNOLOGY'],model_path)
-
-            # Es útil obtener la tecnología con la que se está trabajando
-            # El N total de neuronas con las que el modelo cuenta para hacer predicciones
-            # si las predicciones deseadas son mayores que las que por defecto puede hacer el modelo 
-            # se cambia el modo de prediccíon del modelo
+                model, data_trat, features, n_features, Scaler_y, steps, Scaler_x, p_default, root_dir, id_product = Lstm_engine().loadUtils(model_path,model_metadata, category_metadata)
+                Lstm_engine().predictions(model, data_trat, features, n_features, Scaler_y, id_product,root_dir, steps, 64, Scaler_x, p_default)
+            elif model_metadata['GENERAL_INFO']['TECHNOLOGY'] == "MLP":
+                
+                predictions = Prompt.ask("[bold yellow]•[/] Indique el total de predicciones que desea realizar")
+                Mlp_engine().predictions(model_path,model_metadata,int(predictions))
+            console.print("[bold green]✔ done![/]")
 
         if mode == "Reentrenamiento":
-            model_path = showSettingsModel()
-            # retrainingModel(engine,sql_serverConfig,query,31,model_path)
+            model_path, model_metadata, category_metadata = showSettingsModel()
+
+            console.print("[bold cyan]  Ruta completa -> [/]"+model_path)
+            console.print("[bold yellow] Iniciando proceso de Reentrenamiento [/]")
+            
+            # Determinar la tecnología a usar
+            if model_metadata['GENERAL_INFO']['TECHNOLOGY'] == "LSTM":
+                model, data_trat, features, n_features, Scaler_y, steps, Scaler_x, p_default, root_dir, id_product = Lstm_engine().loadUtils(model_path,model_metadata, category_metadata)
+                model = Lstm_engine().retrainingModel_2(model,data_trat,features,n_features,Scaler_y,steps,Scaler_x,p_default,root_dir,id_product,category_metadata)
+                # Lstm_engine().predictions(model, data_trat, features, n_features, Scaler_y, id_product,root_dir, steps, 64, Scaler_x, p_default)
+            elif model_metadata['GENERAL_INFO']['TECHNOLOGY'] == "MLP":
+                Mlp_engine().retraining(model_path,model_metadata)
     except Exception as e:
         console.print("[bold red] Error! [/]")
         console.print(str(f'[bold red] Detalles:{e} [/]'))
@@ -257,9 +266,6 @@ def intro():
     vseleccion = options[vseleccion-1]
     print(vseleccion)
     return vseleccion
-
-
-
 
 def checkAllDirectory():
     result = False
@@ -412,6 +418,8 @@ def showSettingsModel():
 
                     #Preparamos oara leer la metadata del modelo
                     metadata_path = ruta_actual+'/metadata.json'
+
+                    # print(metadata_path)
                     if os.path.isfile(metadata_path):                    
                         try: 
                             metadata_path = os.path.join(ruta_actual,'metadata.json')
@@ -421,6 +429,8 @@ def showSettingsModel():
                                     #Despues de leer la metadata del archivo, lo guardamos en la variable de recuperación de metadata
                                     if "MODEL_REFERENCY" in item:
                                         model_name = item['MODEL_REFERENCY']['MODEL_NAME']
+                                        technology = item['MODEL_REFERENCY']['TECHNOLOGY']
+                                        # print(model_name)
                                     if "GENERAL_INFO" in item:
                                         model_metadata[model_name] = item
                         except Exception as e: 
@@ -429,34 +439,38 @@ def showSettingsModel():
                     else: 
                         console.print("[bold red] Metadata no encontrada [/]")
 
-                    #Preparamos para leer la metadata de la categoría
-                    metadata_path = os.path.normpath(os.path.join(ruta_actual,"../../../metadata_CAT.json"))
-                    if os.path.isfile(metadata_path):
-                        try: 
-                            with open(metadata_path, 'r',encoding="utf-8") as file: 
-                                metadata = json.load(file)
-                                n_features = 0
-                                same = True
-                                for item in metadata: 
-                                    if "CATEGORY_ID" in item: 
-                                        category = item['CATEGORY_ID']
-                                        if category != cat_before:
-                                            same = False
-                                            cat_before = category
-                                    if not same: 
-                                        if "N_FEATURES" in item:
+                    if technology == "LSTM":
+                        #Preparamos para leer la metadata de la categoría
+                        metadata_path = os.path.normpath(os.path.join(ruta_actual,"../../../metadata_CAT.json"))
+                        if os.path.isfile(metadata_path):
+                            try: 
+                                with open(metadata_path, 'r',encoding="utf-8") as file: 
+                                    metadata = json.load(file)
+                                    n_features = 0
+                                    same = True
+                                    for item in metadata: 
+                                        if "CATEGORY_ID" in item: 
                                             category = item['CATEGORY_ID']
-                                            category_metadata = item
-                        except Exception as e: 
-                            console.print("[bold red] Ocurrió un error al leer la metadata [/]")
-                            console.print(f'[bold red] Detalles {e} [/]')
+                                            if category != cat_before:
+                                                same = False
+                                                cat_before = category
+                                        if not same: 
+                                            if "N_FEATURES" in item:
+                                                category = item['CATEGORY_ID']
+                                                category_metadata = item
+                            except Exception as e: 
+                                console.print("[bold red] Ocurrió un error al leer la metadata [/]")
+                                console.print(f'[bold red] Detalles {e} [/]')
                     
         for i, model in enumerate(models_name,1):
             model_name, extension =  os.path.splitext(model)
 
             last_modified = model_metadata[model_name]['GENERAL_INFO']['FECHA_MODIFICACION']
             technology = model_metadata[model_name]['GENERAL_INFO']['TECHNOLOGY']
-            n_features = str(category_metadata["N_FEATURES"])
+            if technology == "LSTM":
+                n_features = str(category_metadata["N_FEATURES"])
+            else: 
+                n_features = "1"
 
             table.add_row(str(i),str(model),last_modified,technology,n_features)
 

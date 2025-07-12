@@ -27,6 +27,7 @@ from keras.models import Sequential, load_model
 from keras.layers import Dense, Dropout, LSTM, Input, Reshape
 from keras.callbacks import EarlyStopping
 from sklearn.preprocessing import MinMaxScaler, LabelEncoder
+import copy
 
 #Configuracion de paraametros
 
@@ -209,13 +210,14 @@ class Lstm_engine:
         data_modified = pd.concat(series_modified)
         return data_modified
 
-    def create_x_y_train(self,data, new_col, var_columns, var_features, target_col, parameters, show_paremeters=False, steps=0, n_predictions=0):
+    def create_x_y_train(self,data, new_col, var_columns, var_features, target_col, parameters, show_paremeters=False, steps=0, n_predictions=0, n_validationData=None):
         """
         Método que divide la data en entrenamiento y validación
         Los escaladores son: 1 para la serie inicial, contemplando 12 columnas, 
         uno para x con n_features, y otro para y con target
         generamos un escalador para el tratamiento de los datos a algoritmo SLDW
         """
+
         #creamos una copia de la data
         if show_paremeters:
             print(var_columns)
@@ -234,7 +236,15 @@ class Lstm_engine:
 
         # Determinar el índice de corte para train/val
         total_rows = len(data)
-        n_train_rows = int(total_rows * self.TRAINING_PERCENTAGE)
+
+        #una variable en la que si una variable de validación es diferente de none
+        #entonces, se tiene que 
+
+        #El numero total de elementos menos 
+        if n_validationData != None:
+            n_train_rows = int(total_rows-n_validationData)
+        else:
+            n_train_rows = int(total_rows * self.TRAINING_PERCENTAGE)
         # n_val_rows = total_rows - n_train_rows
 
         # Particionar el DataFrame original
@@ -403,7 +413,8 @@ class Lstm_engine:
                 "MODEL_REFERENCY":{
                     "CATEGORY": parameters['category_id'],
                     "ID": parameters['ID_model'],
-                    "MODEL_NAME": parameters['MODEL_NAME']
+                    "MODEL_NAME": parameters['MODEL_NAME'],
+                    "TECHNOLOGY": "LSTM"
                 }
             },
             {
@@ -413,10 +424,10 @@ class Lstm_engine:
                     "EPOCH": len(history.history['loss']),
                     "FECHA_ENTRENAMIENTO": datetim_e,
                     "FECHA_MODIFICACION": datetim_e,
-                    "TECHNOLOGY": "LSTM",
                     "ID_ENCODED": parameters['ID_FORECAST_ENC_VALUE'],
                     "STEPS": str(self.PASOS),
-                    "PREDICTIONS_DEFAULT": str(self.N_PREDICTIONS)
+                    "PREDICTIONS_DEFAULT": str(self.N_PREDICTIONS),
+                    "TECHNOLOGY":"LSTM"
                 }
             },
             {
@@ -503,6 +514,9 @@ class Lstm_engine:
 
             df = self.set_index_datetime(df)
 
+            #obtenemos el id del producto
+            id_product = df[dictionary['FORECAST_ID_COLUMN']].iloc[0]
+
             #ordenamos la data por product key
             df = df.sort_values([dictionary['FORECAST_ID_COLUMN'], 'Date'])
             
@@ -510,48 +524,9 @@ class Lstm_engine:
             df[dictionary['FORECAST_ID_COLUMN_ENCODED']] = model_metadata['GENERAL_INFO']['ID_ENCODED']
 
             # Hacemos tratamiento de datos
-            data_trat = self.tratamiento_datos(df, category_metadata)
+            data_trat = self.tratamiento_datos(df, category_metadata)            
 
-            # Realizamos la prediccion
-            predicciones, last_date = self.predictions(model, data_trat, features, n_features, Scaler_y, steps, 64, Scaler_x, p_default)
-            
-            # Generar rango de fechas futuras a partir de last_date
-            future_dates = pd.date_range(start=last_date + timedelta(days=1), periods=len(predicciones), freq='D')
-            
-            # Crear DataFrame para visualizar fechas y predicciones juntas
-            pred_df = pd.DataFrame({
-                'Fecha': future_dates,
-                'Prediccion': predicciones
-            })
-
-            # Obtener histórico de ventas reales
-            historico_df = data_trat[['OrderQuantity']].copy()
-            historico_df = historico_df.reset_index().rename(columns={'index': 'Fecha'})
-            historico_df = historico_df[['Fecha', 'OrderQuantity']]
-
-            # Graficar histórico y predicciones
-            plt.figure(figsize=(12, 6))
-            plt.plot(historico_df['Fecha'], historico_df['OrderQuantity'], label='Histórico Ventas (OrderQuantity)', color='g', linewidth=2)
-            plt.plot(pred_df['Fecha'], pred_df['Prediccion'], marker='o', color='orange', label='Predicción', linewidth=2)
-            plt.xlabel('Fecha')
-            plt.ylabel('Ventas')
-            plt.title('Histórico de Ventas y Predicciones Futuras')
-            plt.legend()
-            plt.grid(True, linestyle='--', alpha=0.5)
-            plt.tight_layout()
-            plt.show()
-
-            # Graficar las predicciones
-            # plt.figure(figsize=(10, 5))
-            # plt.plot(pred_df['Fecha'], pred_df['Prediccion'], marker='o', color='orange', label='Predicción')
-            # plt.xlabel('Fecha')
-            # plt.ylabel('Predicción')
-            # plt.title('Predicciones futuras')
-            # plt.legend()
-            # plt.grid(True, linestyle='--', alpha=0.5)
-            # plt.tight_layout()
-            # plt.show()
-
+            return model, data_trat, features, n_features, Scaler_y, steps, Scaler_x, p_default, root_dir,id_product
 
     
     def reloadScaler(self,path):
@@ -577,10 +552,11 @@ class Lstm_engine:
         model.summary()
         return model
 
-    def predictions(self, model, df, features, n_features, scaler_y, steps=180, predictions=31, scaler_x=None, n_steps_model=None):
+    def predictions(self, model, df, features, n_features, scaler_y, id_product, root_dir, steps=180, predictions=31, scaler_x=None, n_steps_model=None):
         """
         Realiza predicciones multistep, permitiendo encadenar predicciones si se requieren más pasos que los que el modelo predice por llamada.
         """
+        data_trat = df.copy()
         # Determinar cuántos pasos predice el modelo por llamada
         if n_steps_model is None:
             try:
@@ -642,7 +618,230 @@ class Lstm_engine:
             if scaler_x is not None:
                 temp_for_pred[features] = scaler_x.fit_transform(temp_for_pred[features])
 
-        return preds[:total_steps], last_date
+        # return preds[:total_steps], last_date
+        predicciones = preds[:total_steps]
+        # Generar rango de fechas futuras a partir de last_date
+        future_dates = pd.date_range(start=last_date + timedelta(days=1), periods=len(predicciones), freq='D')
+        
+        # Crear DataFrame para visualizar fechas y predicciones juntas
+        pred_df = pd.DataFrame({
+            'Fecha': future_dates,
+            'Prediccion': predicciones
+        })
+
+        # Obtener histórico de ventas reales
+        historico_df = data_trat[['OrderQuantity']].copy()
+        historico_df = historico_df.reset_index().rename(columns={'index': 'Fecha'})
+        historico_df = historico_df[['Fecha', 'OrderQuantity']]
+
+        #Obtener el path para guardar el las predicciones
+        date_c = datetime.now().strftime('%H_%M_%S_%d-%m-%Y')
+        plt_path = root_dir+f'/accuracy/Predictions/{date_c}'
+
+        os.makedirs(plt_path,exist_ok=True)
+
+        ##### MODIFICADOR DEL TIPO DE GRÁFICO Y COLORIMETRÍA
+        plt.rcParams['figure.facecolor'] = '#001f3f'  # Fondo total (figura)      
+        plt.rcParams['axes.facecolor'] = '#001f3f'    # Fondo del área del gráfico
+
+        # Opcional: cambiar color del texto para que sea visible
+        plt.rcParams['text.color'] = 'white'
+        plt.rcParams['axes.labelcolor'] = 'white'
+        plt.rcParams['xtick.color'] = 'white'
+        plt.rcParams['ytick.color'] = 'white'
+        plt.rcParams['axes.edgecolor'] = 'white'
+        ### / ######
+
+        # Graficar histórico y predicciones
+        plt.figure(figsize=(12, 6))
+        plt.plot(historico_df['Fecha'], historico_df['OrderQuantity'], label='Histórico Ventas (OrderQuantity)', color='#40E0D0', linewidth=2)
+        plt.plot(pred_df['Fecha'], pred_df['Prediccion'], marker='o', color='orange', label='Pronóstico', linewidth=2)
+        plt.xlabel('Periodo')
+        plt.ylabel('Ventas')
+        plt.title(f'HISTÓRICO DE VENTAS VS PRONÓSTICO DE LA DEMANDA \n Producto {id_product}')
+        plt.legend()
+        plt.grid(True, linestyle='--', alpha=0.5)
+        plt.tight_layout()
+        plt.figtext(0.01, 0.01, "Realizado el: "+datetime.now().strftime('%H:%M:%S %d-%m-%Y'), fontsize=10, color="gray")
+        plt.figtext(0.50, 0.01, "Gestión de Innovación en Tecnología Informática S.C.P. | Grupo Consultores®", fontsize=10, color="gray")
+        plt.savefig(plt_path+f'/predictions_{date_c}.jpg',dpi=300)
+        plt.show()
+        plt.close()
+
+    def retrainingModel_2(self, model, df, features, n_features, Scaler_y, steps, Scaler_x, p_default, root_dir, id_product, CAT_metadata, epochs=None):
+        """
+        Realiza el reentrenamiento de un modelo LSTM existente con datos nuevos.
+
+        Args:
+            model: El modelo LSTM ya cargado.
+            df (pd.DataFrame): DataFrame con los datos completos para reentrenar.
+            features (list): Lista de columnas/features a usar.
+            n_features (int): Número de features.
+            Scaler_y: Escalador para la variable objetivo.
+            steps (int): Número de pasos de entrada.
+            Scaler_x: Escalador para las features.
+            p_default (int): Número de predicciones a realizar.
+            root_dir (str): Directorio raíz donde guardar el modelo y utilidades.
+            id_product: ID del producto.
+            CAT_metadata (dict): Diccionario de configuración de la categoría.
+            epochs (int, optional): Número de épocas para el reentrenamiento.
+
+        Returns:
+            model: El modelo reentrenado.
+        """
+        # Parámetros para entrenamiento
+        parameters = {
+            'category_id': CAT_metadata.get('CATEGORY_ID', ''),
+            'ID_model': str(id_product),
+            'forecast_id_col': CAT_metadata.get('FORECAST_ID_COLUMN', ''),
+            'MODEL_NAME': f'mod{id_product}-CAT{CAT_metadata.get("CATEGORY_ID", "")}',
+            'data_size': str(len(df))
+        }
+
+        # Definir columnas
+        new_col = CAT_metadata.get('COLUMN_ADD', '')
+        all_columns_l = CAT_metadata.get('ALL_COLUMNS', features + [new_col])
+        if parameters['forecast_id_col'] in all_columns_l:
+            all_columns_l = [x for x in all_columns_l if x != parameters['forecast_id_col']]
+        target_col = CAT_metadata.get('TARGET_COLUMN', '')
+
+        # Crear sets de entrenamiento y validación
+        x_train, y_train, x_val, y_val, scaler_y, scaler, only_scaled, df_val, parameters = self.create_x_y_train(
+            df, new_col, all_columns_l, features, target_col, parameters, False, steps, p_default
+        )
+
+        # Reentrenar el modelo
+        history = model.fit(
+            x_train, y_train,
+            epochs=epochs if epochs is not None else self.EPOCHS,
+            batch_size=self.BATCH_SIZE,
+            validation_data=(x_val, y_val),
+            verbose=2,
+            shuffle=False
+        )
+
+        # Guardar el modelo reentrenado
+        model_dir = os.path.join(root_dir)
+        model_name = f'mod{id_product}-CAT{CAT_metadata.get("CATEGORY_ID", "")}.keras'
+        model_path = os.path.join(model_dir, model_name)
+        utils_path = os.path.join(model_dir, 'utils')
+        os.makedirs(utils_path, exist_ok=True)
+        model.save(model_path)
+
+        # Ruta del archivo de metadata en el root_dir
+        metadata_path = os.path.join(root_dir, 'metadata.json')
+
+        # Leer la metadata existente si el archivo existe
+        if os.path.exists(metadata_path):
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+        else:
+            metadata = []
+
+        # Modificar partes de la metadata según sea necesario
+        # Ejemplo: actualizar la fecha de modificación y el tamaño de datos
+        for entry in metadata:
+            if isinstance(entry, dict) and "GENERAL_INFO" in entry:
+                entry["GENERAL_INFO"]["FECHA_MODIFICACION"] = datetime.now().strftime('%H:%M:%S %d-%m-%Y')
+                entry["GENERAL_INFO"]["DATOS_ENTRENAMIENTO"] = str(len(df))
+                entry["GENERAL_INFO"]["DATOS_VALIDACION"] = str(len(df_val))
+
+        # Guardar la metadata modificada
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=4)
+
+        # Actualizar los escaladores y datos
+        # joblib.dump(scaler, os.path.join(utils_path, 'Scaler_x.pkl'))
+        # joblib.dump(scaler_y, os.path.join(utils_path, 'Scaler_y.pkl'))
+        # with open(os.path.join(utils_path, 'only_scaled.pkl'), 'wb') as f:
+        #     pickle.dump(only_scaled, f)
+        # df_val.to_csv(os.path.join(utils_path, 'LSLDWINDOW.csv'), index=True)
+
+        return model
+
+        
+
+    
+    def retrainingModel(self, df, productKeyId, dictionary, new_data, epochs=None):
+        """
+        Realiza el reentrenamiento de un modelo LSTM existente con nuevos datos.
+
+        Args:
+            df (pd.DataFrame): DataFrame original usado para entrenar el modelo.
+            productKeyId (str or int): ID del producto cuyo modelo se va a reentrenar.
+            dictionary (dict): Diccionario de configuración de columnas y parámetros.
+            new_data (pd.DataFrame): Nuevos datos para reentrenar el modelo.
+            epochs (int, optional): Número de épocas para el reentrenamiento. Si es None, usa self.EPOCHS.
+
+        Returns:
+            model: El modelo reentrenado.
+        """
+
+        # Definir rutas y nombres
+        category_id = 'CAT' + str(dictionary['CATEGORY_ID'])
+        model_dir = os.path.join(dictionary['MODEL_PATH_DIR'], f'models/{productKeyId}/')
+        model_name = f'mod{productKeyId}-{category_id}'
+        model_path = os.path.join(model_dir, f'{model_name}.keras')
+        utils_path = os.path.join(model_dir, 'utils')
+
+        # Cargar modelo existente
+        model = self.loadModel(model_path)
+
+        # Cargar escaladores y columnas
+        scaler_x = self.reloadScaler(os.path.join(utils_path, 'Scaler_x.pkl'))
+        scaler_y = self.reloadScaler(os.path.join(utils_path, 'Scaler_y.pkl'))
+        with open(os.path.join(utils_path, 'only_scaled.pkl'), 'rb') as f:
+            only_scaled = pickle.load(f)
+
+        # Preparar datos combinando df y new_data
+        combined_df = pd.concat([df, new_data], ignore_index=False)
+        combined_df = combined_df.sort_values([dictionary['FORECAST_ID_COLUMN'], 'Date'])
+
+        # Hacer tratamiento de datos
+        data_trat = self.tratamiento_datos(combined_df, dictionary)
+
+        # Obtener columnas y features
+        all_columns_l = dictionary['ALL_COLUMNS'].copy()
+        all_columns_l.remove(dictionary['FORECAST_ID_COLUMN'])
+        features = dictionary['FEATURES']
+        target_col = dictionary['TARGET_COLUMN']
+        new_col = dictionary['COLUMN_ADD']
+
+        # Parámetros para entrenamiento
+        parameters = {
+            'category_id': category_id,
+            'ID_model': str(productKeyId),
+            'forecast_id_col': dictionary['FORECAST_ID_COLUMN'],
+            'MODEL_NAME': model_name,
+            'data_size': str(len(data_trat))
+        }
+
+        # Crear sets de entrenamiento y validación
+        x_train, y_train, x_val, y_val, scaler_y, scaler, only_scaled, df_val, parameters = self.create_x_y_train(
+            data_trat, new_col, all_columns_l, features, target_col, parameters, False, self.PASOS, self.N_PREDICTIONS
+        )
+
+        # Reentrenar el modelo
+        history = model.fit(
+            x_train, y_train,
+            epochs=epochs if epochs is not None else self.EPOCHS,
+            batch_size=self.BATCH_SIZE,
+            validation_data=(x_val, y_val),
+            verbose=2,
+            shuffle=False
+        )
+
+        # Guardar el modelo reentrenado
+        model.save(model_path)
+
+        # Actualizar los escaladores y datos
+        joblib.dump(scaler, os.path.join(utils_path, 'Scaler_x.pkl'))
+        joblib.dump(scaler_y, os.path.join(utils_path, 'Scaler_y.pkl'))
+        with open(os.path.join(utils_path, 'only_scaled.pkl'), 'wb') as f:
+            pickle.dump(only_scaled, f)
+        df_val.to_csv(os.path.join(utils_path, 'LSLDWINDOW.csv'), index=True)
+
+        return model
 
 
     def createModels(self, df_lst, productKeyIds, dictionary):
@@ -757,7 +956,7 @@ class Lstm_engine:
                 pickle.dump(only_scaled, f)
 
             # regustramos la ubicación del modelo
-            models_dir[int(pk)] = model_name
+            models_dir[int(pk)] = model_path
 
             #eliminamos todo lo que habia en parametros
             parameters = {}
@@ -868,6 +1067,10 @@ class Lstm_engine:
 
         #Hacer creacion de los modelos y guardar 
         models_dir = self.createModels(data_trat,productKeyIds,dictionary)
+
+        # #eliminamos 
+        # del dictionary['MODEL_PATH_DIR']
+        # del dictionary['CATEGORY_ID']
 
         #Guardar como metadata la direccion de los modelos pertenecientes a esa categoría
         metadata = [
