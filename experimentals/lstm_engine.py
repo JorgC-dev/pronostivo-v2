@@ -32,7 +32,6 @@ class Lstm_engine:
                 batch_size = 15,
                 isfloatdata = True,
                 ):
-        # self.sql_server= sql_server_config
         self.PASOS = pasos # No. DE OBSERVACIONES EN EL TIEMPO PARA LA DATA Y PARA ALGORITMO DE 'SLIDDING WINDOW'
         self.TRAINING_PERCENTAGE = training_percentage  #PORCENTAJE DE DATOS A TOMAR PARA ENTRENAMIENTO
         self.N_PREDICTIONS = n_predictions  #NUMERO DE PREDICCIONES A REALIZAR
@@ -651,8 +650,8 @@ class Lstm_engine:
                 pickle.dump(only_scaled, f)
             models_dir[int(pk)] = model_path
             parameters = {}
-            # if pk == 234:
-            #     break
+            if pk == 234:
+                break
 
         return models_dir
     
