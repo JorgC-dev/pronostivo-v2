@@ -1,9 +1,9 @@
 """
 README
 
-CLI oficial de SIPPBST, que es controla Predicciones, Entrenamiento, Y creación de modelos en una amplia gama de escenarios
-en esta versión se integra LSTM y MLP. 
+CLI principal para SIPPBST, que controla Predicciones, Rentrenamiento, Y creación de modelos en una amplia gama de escenarios.
 
+Esta versión se integra LSTM y MLP. 
 """
 
 from rich.console import Console
@@ -39,10 +39,10 @@ MLP_SQL_PQUERY = MLP_SQL_PATH+'prediction_query.sql'
 
 #LSTM
 LSTM_SQL_PATH = SQL_PATH+'LSTM/'
-LSTM_SQL_HQUERY = LSTM_SQL_PATH+'historic_query.sql' #Consulta que trae el histórico de todos los productos con los features 
-LSTM_SQL_PQUERY = LSTM_SQL_PATH+'product_query.sql' #Consulta que trae la información sobre los prodúctos de la bd
+LSTM_SQL_HQUERY = LSTM_SQL_PATH+'historic_query.sql'
+LSTM_SQL_PQUERY = LSTM_SQL_PATH+'product_query.sql' 
 LSTM_SQL_RQUERY = LSTM_SQL_PATH+'retraining_query.sql'
-# LSTM_SQL_PQUERY = LSTM_SQL_PATH+'prediction_query.sql'
+
 
 SQL_DIRECTORIES =  [MLP_SQL_TQUERY,LSTM_SQL_HQUERY,LSTM_SQL_PQUERY]
 
@@ -53,7 +53,6 @@ def prepareConection():
     config = configparser.ConfigParser()
     ready = checkAllDirectory()
     if not ready:
-    # if not os.path.exists('config.ini'):
         settings()
     else:
         try:
@@ -73,10 +72,8 @@ def prepareConection():
                         password = ""
                         driver = ""
                         other = ""
-                        
-                        #create variables to asign the key and the value
+
                         for key, value in config[section].items():
-                            #create variables with the info about each one
                             if key == 'server':
                                 server = value
                             elif key == 'port':
@@ -91,22 +88,17 @@ def prepareConection():
                                 driver = value
                             elif key == 'other':
                                 other = value
-                        #add the variables at the table
                         table.add_row(str(num),server,port, database, uid, password, driver, other)
                         num += 1
                     table.add_row("[bold magenta]a[/]","[bold magenta]añadir otro[/]","[bold magenta]■■■■■[/]","[bold magenta]■■■■■[/]","[bold magenta]■■■■■[/]","[bold magenta]■■■■■[/]","[bold magenta]■■■■■[/]","[bold magenta]■■■■■[/]")
                     console.print(table)
-                    
-                    #generlo listado de opciones
                     choices = [str(i+1) for i in range(len(config))]
                     choices.append("a")
                     opcion = Prompt.ask("[bold blue]•[/] Selecciona una opción", choices= choices)
                     
                     if opcion == 'a':
-                        #add items
                         settings()
                     else:
-                        #generate connection setting string
                         rgSelected = list(config.keys())[int(opcion)]
                         properties = config[rgSelected]
                         vstrConnection = ""
@@ -132,7 +124,6 @@ def prepareConection():
                                     vstrConnection += key+"="+value+";"
                             else: 
                                 vstrConnection += key+"="+value+";"
-                        print(vstrConnection)
                         v_connection, vstrConnection = check_engine(vstrConnection)
                         return v_connection, vstrConnection
                 else:
@@ -196,33 +187,23 @@ def setMode(mode, v_connection=None, sql_serverConfig=None):
                 lstm_engine.main(category_id,historic_data,product_data)
                 console.print("[bold green]✔ Finalizado [/]")
         if mode == "Hacer Predicciones":
-            #leer la metadata del modelo para saber cuantas predicciones puede hacer
             model_path, model_metadata, category_metadata = showSettingsModel()
-
             console.print("[bold cyan]  Ruta completa -> [/]"+model_path)
             console.print("[bold yellow]Iniciando proceso de predicción[/]")
-            
-            #determinar la tecnología a usar
             if model_metadata['GENERAL_INFO']['TECHNOLOGY'] == "LSTM":
                 model, data_trat, features, n_features, Scaler_y, steps, Scaler_x, p_default, root_dir, id_product = Lstm_engine().loadUtils(model_path,model_metadata, category_metadata)
                 Lstm_engine().predictions(model, data_trat, features, n_features, Scaler_y, id_product,root_dir, steps, 64, Scaler_x, p_default)
             elif model_metadata['GENERAL_INFO']['TECHNOLOGY'] == "MLP":
-                
                 predictions = Prompt.ask("[bold yellow]•[/] Indique el total de predicciones que desea realizar")
                 Mlp_engine().predictions(model_path,model_metadata,int(predictions))
             console.print("[bold green]✔ done![/]")
-
         if mode == "Reentrenamiento":
             model_path, model_metadata, category_metadata = showSettingsModel()
-
             console.print("[bold cyan]  Ruta completa -> [/]"+model_path)
             console.print("[bold yellow] Iniciando proceso de Reentrenamiento [/]")
-            
-            # Determinar la tecnología a usar
             if model_metadata['GENERAL_INFO']['TECHNOLOGY'] == "LSTM":
                 model, data_trat, features, n_features, Scaler_y, steps, Scaler_x, p_default, root_dir, id_product = Lstm_engine().loadUtils(model_path,model_metadata, category_metadata)
                 model = Lstm_engine().retrainingModel_2(model,data_trat,features,n_features,Scaler_y,steps,Scaler_x,p_default,root_dir,id_product,category_metadata)
-                # Lstm_engine().predictions(model, data_trat, features, n_features, Scaler_y, id_product,root_dir, steps, 64, Scaler_x, p_default)
             elif model_metadata['GENERAL_INFO']['TECHNOLOGY'] == "MLP":
                 Mlp_engine().retraining(model_path,model_metadata)
     except Exception as e:
@@ -283,41 +264,35 @@ def checkAllDirectory():
         os.makedirs(MLP_SQL_PATH, exist_ok=True)
         os.makedirs(LSTM_SQL_PATH, exist_ok=True)
 
-        #Bucle for para archivos de entrenamiento
+        #ENTRENAMIENTO
         for directory in SQL_DIRECTORIES:
             try:
                 with open(directory, 'r', encoding='utf-8') as file:
                     contenido = file.read()
                     pass
             except Exception as e: 
-                #Intentar entonces, crearlo
                 with open(directory,'w') as file: 
                     pass
 
-        #Retraininig files
+        # RETAINING
         with open(MLP_SQL_RQUERY,'w') as file:
             pass
 
-        #Prediction file
+        # PREDICTION
         with open(MLP_SQL_PQUERY,'w') as file:
             pass
         result = True
-    except Exception as e: 
+    except Exception as e:
         result = False
     return result
 
 
 def settings():
-
     console.clear()
     console.print("[bold green]GESTOR DE DIRECCIONES DE BASE DE DATOS SIPPBST[/bold green]")
     console.print("Si estas viendo este mensaje es porque aun no has configurado \r\n la cadena de conexión o deseas configurar otra")
     console.print("[bold]Iniciando modo de configuración...[bold]")
-
-    #mostramos los drivers primero
     driver = showDrivers()
-
-    #pedimos que nos ingrese los valores de cada campo
     Kvalues = []
     for keyName in keys:
         if keyName == 'DRIVER':
@@ -333,8 +308,6 @@ def settings():
             if value:
                 Kvalues.append(value)
         idSection =  generateIDSections()
-
-    #una vez generado mandamos
     generate_sections(INI_PATH,idSection,keys,Kvalues)
     prepareConection()
 
@@ -350,20 +323,16 @@ def generate_sections(file_name, region_name, keys, values=None):
     try:
         config.read(file_name)
     except Exception as e:
-        print(f"Error al leer el archivo INI: {e}")
-
+        console.print(f"Error al leer el archivo INI: {e}")
     if region_name not in config:
         config.add_section(region_name)
-
     for i, key in enumerate(keys):
         if values and i < len(values):
             config.set(region_name, key, str(values[i]))
         else:
             config.set(region_name, key, "")
-
     with open(file_name, 'w') as configfile:
         config.write(configfile)
-    
 
 
 
@@ -378,12 +347,6 @@ def showDrivers():
     driver = Prompt.ask("[bold blue]•[/] Selecciona un driver", choices=[str(i) for i in range(1, len(drivers)+1)])
     driver = drivers[int(driver)-1]
     return driver
-
-def showMenu():
-    console.clear()
-    console.rule("[bold green]Bienvenido al menú de gestión de modelos de predicción[/]")
-    console.print("Aquí podrás visualizar todos tus modelos de predicción, así como retomarlos para realizar predicciones y reentrenarlos")
-
 
 
 #Menu models
@@ -402,7 +365,7 @@ def showSettingsModel():
         table.add_column("Tecnología",style="#FFA500")
         table.add_column("Cantidad de Features", style="white")
 
-        #Funcion para listar todos los modelos
+        #LISTAR MODELOS 
         model_metadata = {}
         category_metadata = {}
         models_name = []
@@ -415,22 +378,16 @@ def showSettingsModel():
                     models_path_join = os.path.join(ruta_actual, archivo)
                     models_path.append(models_path_join)
                     models_name.append(archivo)
-
-                    #Preparamos oara leer la metadata del modelo
                     metadata_path = ruta_actual+'/metadata.json'
-
-                    # print(metadata_path)
                     if os.path.isfile(metadata_path):                    
                         try: 
                             metadata_path = os.path.join(ruta_actual,'metadata.json')
                             with open(metadata_path,'r',encoding="utf-8") as file:
                                 metadata = json.load(file)
                                 for item in metadata: 
-                                    #Despues de leer la metadata del archivo, lo guardamos en la variable de recuperación de metadata
                                     if "MODEL_REFERENCY" in item:
                                         model_name = item['MODEL_REFERENCY']['MODEL_NAME']
                                         technology = item['MODEL_REFERENCY']['TECHNOLOGY']
-                                        # print(model_name)
                                     if "GENERAL_INFO" in item:
                                         model_metadata[model_name] = item
                         except Exception as e: 
@@ -440,7 +397,6 @@ def showSettingsModel():
                         console.print("[bold red] Metadata no encontrada [/]")
 
                     if technology == "LSTM":
-                        #Preparamos para leer la metadata de la categoría
                         metadata_path = os.path.normpath(os.path.join(ruta_actual,"../../../metadata_CAT.json"))
                         if os.path.isfile(metadata_path):
                             try: 
@@ -461,19 +417,15 @@ def showSettingsModel():
                             except Exception as e: 
                                 console.print("[bold red] Ocurrió un error al leer la metadata [/]")
                                 console.print(f'[bold red] Detalles {e} [/]')
-                    
         for i, model in enumerate(models_name,1):
             model_name, extension =  os.path.splitext(model)
-
             last_modified = model_metadata[model_name]['GENERAL_INFO']['FECHA_MODIFICACION']
             technology = model_metadata[model_name]['GENERAL_INFO']['TECHNOLOGY']
             if technology == "LSTM":
                 n_features = str(category_metadata["N_FEATURES"])
             else: 
                 n_features = "1"
-
             table.add_row(str(i),str(model),last_modified,technology,n_features)
-
         console.print(table)
         model = Prompt.ask("[bold blue]•[/] Selecciona un modelo", choices=[str(i) for i in range(1, len(models_name)+1)])
         console.print(f"[bold green]✔ Modelo seleccionado: [/]"+f"""[bold orange]{models_name[int(model)-1]}[/]""")
@@ -481,12 +433,6 @@ def showSettingsModel():
         name, extension = os.path.splitext(models_name[int(model)-1])
         contiNue = False
         return model_path, model_metadata[name], category_metadata
-
-
-def predictingModel(tecnhnology, model_path):
-    console.print("[bold cyan]Ruta -> [/]"+model_path)
-    console.print("[bold green]Iniciando proceso de predicción[/] "+model_path)
-    # obj.modelPredicFuncion(sql_serverConfig,query,steps, model_path)
 
 def retrainingModel(obj, sql_serverConfig, query, steps, model_path):
     console.print("[bold cyan] Ruta -> [/]"+model_path)
@@ -497,7 +443,6 @@ def retrainingModel(obj, sql_serverConfig, query, steps, model_path):
 
 
 def main(salir = False):
-
     while salir == False:
         console.clear()
         vseleccion = intro()

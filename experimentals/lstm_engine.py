@@ -2,38 +2,25 @@
 LSTM ENGINE V1.1
 
 Clase que integra las funcionalidades y servicios de LSTM
-
 Tipo de Modelo soportado: Multivariado - Multistep
-
 Los hiperparámetros están por defecto a un look forward de 180 días (6 meses), a 31 días de predicción
-
 Es decir, que el modelo se le presentan secuencias de 6 meses para predecir el siguiente mes
 '''
 
-import pyodbc
 import pandas as pd
 import os
 import shutil
 import json
-from datetime import date, datetime, timedelta
-from dateutil.relativedelta import relativedelta
+from datetime import datetime, timedelta
 import matplotlib.pylab as plt
 import numpy as np
 import joblib
 import pickle
-from datetime import date, datetime, timedelta
 
 from keras.models import Sequential, load_model
-from keras.layers import Dense, Dropout, LSTM, Input, Reshape
+from keras.layers import Dense, LSTM, Input, Reshape
 from keras.callbacks import EarlyStopping
 from sklearn.preprocessing import MinMaxScaler, LabelEncoder
-import copy
-
-#Configuracion de paraametros
-
-
-
-
 
 class Lstm_engine: 
     def __init__(self, 
