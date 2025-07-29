@@ -484,8 +484,9 @@ class Mlp_engine:
             for i in range(len(future_days)):
                 future_days[i] = str(future_days[i])[:7]
         future_data = pd.DataFrame(future_days, columns=['fecha'])
-        model = self.crear_modeloFF()
 
+        model = self.crear_modeloFF()
+        
         datetim_e = datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
         model_path = dirmodels_name+"/model-training"+datetim_e
         model_path_copy = model_path

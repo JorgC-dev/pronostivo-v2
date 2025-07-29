@@ -175,7 +175,6 @@ def setMode(mode, v_connection=None, sql_serverConfig=None):
                         status.update("[bold green] Hecho [/]")
                     if h_query != "" and p_query != "":
                         status.update("[bold yellow] Realizando consultas [/]")
-                        # lstm_engine = Lstm_engine(sql_serverConfig)
                         lstm_engine = Lstm_engine()
                         historic_data = v_connection.getSQL(h_query, console)
                         status.update("[bold green] Consulta 1... Hecho [/]")
