@@ -1,13 +1,24 @@
+"""
+README
+
+CLI principal para SIPPBST, que controla Predicciones, Rentrenamiento, Y creación de modelos en una amplia gama de escenarios.
+
+Esta versión se integra LSTM y MLP. 
+"""
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 from rich.prompt import Prompt
 from rich.table import Table
 import os
+import json
+from collections import defaultdict
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 import configparser
-# from experimentals.engine import engine
-from engine import engine
+from mlp_engine import Mlp_engine 
+from lstm_engine import Lstm_engine
+from conection import connection
 import pyodbc
 import random
 import string
@@ -16,18 +27,32 @@ import string
 
 console = Console()
 keys = ["SERVER","PORT","DATABASE","USER","PASSWORD","DRIVER","OTHER"]
+
+#BASE
 SQL_PATH = './SQL/'
-SQL_TQUERY = SQL_PATH+'training_query.sql'
-SQL_RQUERY = SQL_PATH+'retraining_query.sql'
-SQL_PQUERY = SQL_PATH+'prediction_query.sql'
+
+#MLP
+MLP_SQL_PATH = SQL_PATH+'MLP/'
+MLP_SQL_TQUERY = MLP_SQL_PATH+'training_query.sql'
+MLP_SQL_RQUERY = MLP_SQL_PATH+'retraining_query.sql'
+MLP_SQL_PQUERY = MLP_SQL_PATH+'prediction_query.sql'
+
+#LSTM
+LSTM_SQL_PATH = SQL_PATH+'LSTM/'
+LSTM_SQL_HQUERY = LSTM_SQL_PATH+'historic_query.sql'
+LSTM_SQL_PQUERY = LSTM_SQL_PATH+'product_query.sql' 
+LSTM_SQL_RQUERY = LSTM_SQL_PATH+'retraining_query.sql'
+
+
+SQL_DIRECTORIES =  [MLP_SQL_TQUERY,LSTM_SQL_HQUERY,LSTM_SQL_PQUERY]
+
 INI_PATH = 'config.ini'
 MODELSDIR_PATH = './models/'
 
-def prepareConection(mode):
+def prepareConection():
     config = configparser.ConfigParser()
     ready = checkAllDirectory()
     if not ready:
-    # if not os.path.exists('config.ini'):
         settings()
     else:
         try:
@@ -47,10 +72,8 @@ def prepareConection(mode):
                         password = ""
                         driver = ""
                         other = ""
-                        
-                        #create variables to asign the key and the value
+
                         for key, value in config[section].items():
-                            #create variables with the info about each one
                             if key == 'server':
                                 server = value
                             elif key == 'port':
@@ -65,42 +88,44 @@ def prepareConection(mode):
                                 driver = value
                             elif key == 'other':
                                 other = value
-                        #add the variables at the table
                         table.add_row(str(num),server,port, database, uid, password, driver, other)
                         num += 1
                     table.add_row("[bold magenta]a[/]","[bold magenta]añadir otro[/]","[bold magenta]■■■■■[/]","[bold magenta]■■■■■[/]","[bold magenta]■■■■■[/]","[bold magenta]■■■■■[/]","[bold magenta]■■■■■[/]","[bold magenta]■■■■■[/]")
                     console.print(table)
-
-                    # print(len(config))
-                    
-                    #generlo listado de opciones
                     choices = [str(i+1) for i in range(len(config))]
                     choices.append("a")
                     opcion = Prompt.ask("[bold blue]•[/] Selecciona una opción", choices= choices)
                     
                     if opcion == 'a':
-                        #add items
                         settings()
                     else:
-                        #generate connection setting string
                         rgSelected = list(config.keys())[int(opcion)]
                         properties = config[rgSelected]
                         vstrConnection = ""
+                        server = ""
                         for key, value in properties.items(): 
-                            
                             if key == "driver":
                                 vstrConnection += key+"={"+value+"};"
                             elif key == "other":
                                 vstrConnection += value+";"
-                            elif key == "port":
-                                vstrConnection += ","+value+";"
                             elif key == "server":
-                                vstrConnection += key+"="+value
+                                server = value
+                            elif key == "port": 
+                                port = value
+                                if port != "":
+                                    vstrConnection += f'server={server},{port};'
+                                else: 
+                                    vstrConnection += str(f'server={server};')
+                            elif key == "user":
+                                if value != "":
+                                    vstrConnection += key+"="+value+";"
+                            elif key == "password":
+                                if value != "":
+                                    vstrConnection += key+"="+value+";"
                             else: 
                                 vstrConnection += key+"="+value+";"
-                        print(vstrConnection)
-                        engine, vstrConnection,query = check_engine(vstrConnection,mode)
-                        return engine, vstrConnection, query
+                        v_connection, vstrConnection = check_engine(vstrConnection)
+                        return v_connection, vstrConnection
                 else:
                     pass
         except Exception as e: 
@@ -108,62 +133,101 @@ def prepareConection(mode):
             console.print(e)
 
 
-def setMode(mode, engine, sql_serverConfig,query):
-    print("Iniciando gestor de modulos de funcionamiento")
+def selectTechnology():
+    console.rule("[bold green] Por favor, indque la tecnología que usará: [/]")
+    table = Table("MLP(Multilayer Perceptron)","LSTM(Long Short Term Memory)")
+    table.add_row("✔ Simplicidad y Facilidad de Implementación","✔ Manejo Efectivo de Dependencias Temporales Largas")
+    table.add_row("✔ Capacidad para Capturar Relaciones No Lineales","✔ Robustez a Problemas de Gradiente")
+    table.add_row("✔ Versatilidad","✔ Aprendizaje Automático de Características Temporales")
+    table.add_row("✔ Menos Requisitos de Datos (en comparación con LSTMs)","✔ Idóneas para Datos Secuenciales")
+    table.add_row("✔ Entrenamiento Rápido","✔ Capacidad para Modelar Patrones Complejos y Dinámicos")
+    console.print(table)
+    options = ["MLP(Multilayer-Perceptron)","LSTM(Long Short Term Memory)"]
+    for i, option in enumerate(options):
+        console.print(f"{str(i+1)} > {option}")
+    vseleccion = int(Prompt.ask(choices=[str(i) for i in range(1,len(options)+1)]))
+    vseleccion = options[vseleccion-1]
+    return vseleccion
+
+
+def setMode(mode, v_connection=None, sql_serverConfig=None):
+    console.print("[bold yellow] Iniciando gestor de modulos de funcionamiento [/]")
     try:
         if mode == "Entrenar-Crear modelo":
-                engine.main()
+            vseleccion = selectTechnology()
+            if vseleccion == "MLP(Multilayer-Perceptron)":
+                with open(MLP_SQL_TQUERY, 'r', encoding='utf-8') as file:
+                    query = file.read()
+                    console.print("[bold green] Validando contenido...[/]") 
+                if query:
+                    mlp_engine = Mlp_engine()
+                    data = v_connection.getSQL(query, console)
+                    mlp_engine.main(data)
+            elif vseleccion == "LSTM(Long Short Term Memory)":
+                with console.status("[bold yellow] Realizando consultas y verificando archivos [/]", spinner="arc") as status:
+                    status.update("[bold Yellow] {data histórica} Validando contenido... [/]") 
+                    with open(LSTM_SQL_HQUERY, 'r', encoding='utf-8') as file:
+                        h_query = file.read()
+                        status.update("[bold green] Hecho [/]")
+                    status.update("[bold green] {data productos} Validando data de productos... [/]")
+                    with open(LSTM_SQL_PQUERY, 'r', encoding='utf-8') as file:
+                        p_query = file.read()
+                        status.update("[bold green] Hecho [/]")
+                    if h_query != "" and p_query != "":
+                        status.update("[bold yellow] Realizando consultas [/]")
+                        lstm_engine = Lstm_engine()
+                        historic_data = v_connection.getSQL(h_query, console)
+                        status.update("[bold green] Consulta 1... Hecho [/]")
+                        product_data = v_connection.getSQL(p_query, console)
+                        status.update("[bold green] Consulta 2... Hecho [/]")
+                console.print("[bold yellow] Iniciando creación de modelos LSTM[/]")
+                category_id = Prompt.ask("[bold blue]•[/] Indique aquí un identificador o categoria a " \
+                "la que pertenecerán los modelos, esto será unicamente para reconocimiento de los modelos")
+                lstm_engine.main(category_id,historic_data,product_data)
+                console.print("[bold green]✔ Finalizado [/]")
         if mode == "Hacer Predicciones":
-            #preguntar sobre cuantos días de prediccion quiere
-            steps = Prompt.ask("¿Cuantos días a futuro?")
-            model_path = showSettingsModel()
-            predictingModel(engine, sql_serverConfig, query, steps, model_path)
+            model_path, model_metadata, category_metadata = showSettingsModel()
+            console.print("[bold cyan]  Ruta completa -> [/]"+model_path)
+            console.print("[bold yellow]Iniciando proceso de predicción[/]")
+            if model_metadata['GENERAL_INFO']['TECHNOLOGY'] == "LSTM":
+                model, data_trat, features, n_features, Scaler_y, steps, Scaler_x, p_default, root_dir, id_product = Lstm_engine().loadUtils(model_path,model_metadata, category_metadata)
+                Lstm_engine().predictions(model, data_trat, features, n_features, Scaler_y, id_product,root_dir, steps, 64, Scaler_x, p_default)
+            elif model_metadata['GENERAL_INFO']['TECHNOLOGY'] == "MLP":
+                predictions = Prompt.ask("[bold yellow]•[/] Indique el total de predicciones que desea realizar")
+                Mlp_engine().predictions(model_path,model_metadata,int(predictions))
+            console.print("[bold green]✔ done![/]")
         if mode == "Reentrenamiento":
-            model_path = showSettingsModel()
-            retrainingModel(engine,sql_serverConfig,query,31,model_path)
+            model_path, model_metadata, category_metadata = showSettingsModel()
+            console.print("[bold cyan]  Ruta completa -> [/]"+model_path)
+            console.print("[bold yellow] Iniciando proceso de Reentrenamiento [/]")
+            if model_metadata['GENERAL_INFO']['TECHNOLOGY'] == "LSTM":
+                model, data_trat, features, n_features, Scaler_y, steps, Scaler_x, p_default, root_dir, id_product = Lstm_engine().loadUtils(model_path,model_metadata, category_metadata)
+                model = Lstm_engine().retrainingModel_2(model,data_trat,features,n_features,Scaler_y,steps,Scaler_x,p_default,root_dir,id_product,category_metadata)
+            elif model_metadata['GENERAL_INFO']['TECHNOLOGY'] == "MLP":
+                Mlp_engine().retraining(model_path,model_metadata)
     except Exception as e:
-        console.print("[bold red] Error!, Verifique que la query sea correcta [/]")
-        console.print(f'[bold red] Detalles: {e} [/]')
+        console.print("[bold red] Error! [/]")
+        console.print(str(f'[bold red] Detalles:{e} [/]'))
 
 def set_terminal_size(columns=80, rows=24):
     os.system(f'mode con: cols={columns} lines={rows}' if os.name == 'nt' else f'printf "\e[8;{rows};{columns}t"')
 
 
-def check_engine(sql_serverConfig,mode):
-    
+def check_engine(sql_serverConfig):
     while True:
         console.clear() 
-        console.print("[bold green] Obteniendo la query...[/bold green]")
-        #Revisar la carpeta sql y checar que los archivos sql de entrenamiento y reentrenamiento estén disponibles
-        # qPrompt = input("Por favor, ingrese la consulta SQL a continuación.")
-        # qPrompt = qPrompt.strip()
-
-        if mode == "Entrenar-Crear modelo":
-            query_path = SQL_TQUERY
-        if mode == "Hacer Predicciones":
-            query_path = SQL_PQUERY
-        if mode == "Reentrenamiento":
-            query_path = SQL_RQUERY
-        
-        with open(query_path, 'r', encoding='utf-8') as file:
-            sql_script = file.read()
-            # print(sql_serverConfig)
-            console.print("[bold green] Validando contenido...[/bold green]") 
-        if sql_script:
-            #Si el archivo no está vacío
-            obj = engine(sql_serverConfig, str(sql_script))
-            if obj:
-                try: 
-                    obj.get_sqlconnection(sql_serverConfig)
-                except Exception as e:
-                    console.print("[bold red]¡Error![/bold red]")
-                    console.print(f"[bold red]Error: {e}[/bold red]")
-                    pass
-            else:
-                console.print("[bold red]¡Engine no respondió![/bold red]")
-            return obj, sql_serverConfig, sql_script
+        console.print(f'Apuntador de conexión --> [bold cyan]{sql_serverConfig} [/]')
+        obj = connection(sql_serverConfig)
+        if obj: 
+            try: 
+                obj.get_sqlconnection(console)
+            except Exception as e:
+                console.print("[bold red]¡Error![/bold red]")
+                console.print(f"[bold red]Detalles: {e}[/bold red]")
+                pass
         else: 
-            console.print("[bold orange] Archivo vacío, por favor, inserte la consulta y vuelva a intentarlo [/]")
+            console.print("[bold red]¡Engine no respondió![/bold red]")
+        return obj, sql_serverConfig
 
 
 
@@ -183,9 +247,6 @@ def intro():
     print(vseleccion)
     return vseleccion
 
-
-
-
 def checkAllDirectory():
     result = False
     try:
@@ -197,39 +258,40 @@ def checkAllDirectory():
             with open(INI_PATH,'w') as file:
                 pass
         #SQL's path
-        if not os.path.exists(SQL_PATH):
-            os.makedirs(SQL_PATH)
+        os.makedirs(SQL_PATH, exist_ok=True)
+        os.makedirs(SQL_PATH, exist_ok=True)
+        os.makedirs(MLP_SQL_PATH, exist_ok=True)
+        os.makedirs(LSTM_SQL_PATH, exist_ok=True)
 
-            #traininig files
-            with open(SQL_TQUERY,'w') as file: 
-                pass
-            
-            #Retraininig files
-            with open(SQL_RQUERY,'w') as file:
-                pass
+        #ENTRENAMIENTO
+        for directory in SQL_DIRECTORIES:
+            try:
+                with open(directory, 'r', encoding='utf-8') as file:
+                    contenido = file.read()
+                    pass
+            except Exception as e: 
+                with open(directory,'w') as file: 
+                    pass
 
-            #Prediction file
-            with open(SQL_PQUERY,'w') as file:
-                pass
+        # RETAINING
+        with open(MLP_SQL_RQUERY,'w') as file:
+            pass
 
-        
+        # PREDICTION
+        with open(MLP_SQL_PQUERY,'w') as file:
+            pass
         result = True
-    except Exception as e: 
+    except Exception as e:
         result = False
     return result
 
 
 def settings():
-
     console.clear()
     console.print("[bold green]GESTOR DE DIRECCIONES DE BASE DE DATOS SIPPBST[/bold green]")
     console.print("Si estas viendo este mensaje es porque aun no has configurado \r\n la cadena de conexión o deseas configurar otra")
     console.print("[bold]Iniciando modo de configuración...[bold]")
-
-    #mostramos los drivers primero
     driver = showDrivers()
-
-    #pedimos que nos ingrese los valores de cada campo
     Kvalues = []
     for keyName in keys:
         if keyName == 'DRIVER':
@@ -245,8 +307,6 @@ def settings():
             if value:
                 Kvalues.append(value)
         idSection =  generateIDSections()
-
-    #una vez generado mandamos
     generate_sections(INI_PATH,idSection,keys,Kvalues)
     prepareConection()
 
@@ -262,20 +322,16 @@ def generate_sections(file_name, region_name, keys, values=None):
     try:
         config.read(file_name)
     except Exception as e:
-        print(f"Error al leer el archivo INI: {e}")
-
+        console.print(f"Error al leer el archivo INI: {e}")
     if region_name not in config:
         config.add_section(region_name)
-
     for i, key in enumerate(keys):
         if values and i < len(values):
             config.set(region_name, key, str(values[i]))
         else:
             config.set(region_name, key, "")
-
     with open(file_name, 'w') as configfile:
         config.write(configfile)
-    
 
 
 
@@ -291,12 +347,6 @@ def showDrivers():
     driver = drivers[int(driver)-1]
     return driver
 
-def showMenu():
-    console.clear()
-    console.rule("[bold green]Bienvenido al menú de gestión de modelos de predicción[/]")
-    console.print("Aquí podrás visualizar todos tus modelos de predicción, así como retomarlos para realizar predicciones y reentrenarlos")
-
-
 
 #Menu models
 def showSettingsModel():
@@ -304,39 +354,84 @@ def showSettingsModel():
     path = './models'
     while contiNue:
         console.clear()
-        models_dir = os.listdir(path)
         console.rule("[bold green]Gestión de modelos[/bold green]")
         console.print("[bold green]A continuación se presenta una tabla con los modelos disponibles[/bold green]")
         console.print("*** Seleccione un modelo para continuar ***")
         table = Table(title="Modelos disponibles")
         table.add_column("Opción", style="cyan")
         table.add_column("Modelo", style="magenta")
-        table.add_column("Fecha de entrenamiento", style="yellow")
+        table.add_column("Último entrenamiento", style="yellow")
+        table.add_column("Tecnología",style="#FFA500")
+        table.add_column("Cantidad de Features", style="white")
 
-        #Funcion para listar todos los modelos
+        #LISTAR MODELOS 
+        model_metadata = {}
+        category_metadata = {}
         models_name = []
         models_path = []
+
+        cat_before = ""
         for ruta_actual, subdirectorio, archivos in os.walk(path):
             for archivo in archivos:
                 if archivo.endswith('.keras'):
                     models_path_join = os.path.join(ruta_actual, archivo)
                     models_path.append(models_path_join)
                     models_name.append(archivo)
+                    metadata_path = ruta_actual+'/metadata.json'
+                    if os.path.isfile(metadata_path):                    
+                        try: 
+                            metadata_path = os.path.join(ruta_actual,'metadata.json')
+                            with open(metadata_path,'r',encoding="utf-8") as file:
+                                metadata = json.load(file)
+                                for item in metadata: 
+                                    if "MODEL_REFERENCY" in item:
+                                        model_name = item['MODEL_REFERENCY']['MODEL_NAME']
+                                        technology = item['MODEL_REFERENCY']['TECHNOLOGY']
+                                    if "GENERAL_INFO" in item:
+                                        model_metadata[model_name] = item
+                        except Exception as e: 
+                            console.print("[bold red] ¡Ocurrió un error al leer la metadata! [/]")
+                            console.print(f'[bold red] Detalles: {e} [/]')
+                    else: 
+                        console.print("[bold red] Metadata no encontrada [/]")
 
+                    if technology == "LSTM":
+                        metadata_path = os.path.normpath(os.path.join(ruta_actual,"../../../metadata_CAT.json"))
+                        if os.path.isfile(metadata_path):
+                            try: 
+                                with open(metadata_path, 'r',encoding="utf-8") as file: 
+                                    metadata = json.load(file)
+                                    n_features = 0
+                                    same = True
+                                    for item in metadata: 
+                                        if "CATEGORY_ID" in item: 
+                                            category = item['CATEGORY_ID']
+                                            if category != cat_before:
+                                                same = False
+                                                cat_before = category
+                                        if not same: 
+                                            if "N_FEATURES" in item:
+                                                category = item['CATEGORY_ID']
+                                                category_metadata = item
+                            except Exception as e: 
+                                console.print("[bold red] Ocurrió un error al leer la metadata [/]")
+                                console.print(f'[bold red] Detalles {e} [/]')
         for i, model in enumerate(models_name,1):
-            table.add_row(str(i),str(model),"Proximamente")
+            model_name, extension =  os.path.splitext(model)
+            last_modified = model_metadata[model_name]['GENERAL_INFO']['FECHA_MODIFICACION']
+            technology = model_metadata[model_name]['GENERAL_INFO']['TECHNOLOGY']
+            if technology == "LSTM":
+                n_features = str(category_metadata["N_FEATURES"])
+            else: 
+                n_features = "1"
+            table.add_row(str(i),str(model),last_modified,technology,n_features)
         console.print(table)
         model = Prompt.ask("[bold blue]•[/] Selecciona un modelo", choices=[str(i) for i in range(1, len(models_name)+1)])
-        console.print(f"[bold green]Modelo seleccionado: [/]"+f"""[bold orange]{models_name[int(model)-1]}[/]""")
+        console.print(f"[bold green]✔ Modelo seleccionado: [/]"+f"""[bold orange]{models_name[int(model)-1]}[/]""")
         model_path = models_path[int(model)-1]
+        name, extension = os.path.splitext(models_name[int(model)-1])
         contiNue = False
-        return model_path
-
-
-def predictingModel(obj, sql_serverConfig, query, steps, model_path):
-    console.print("[bold cyan]Ruta -> [/]"+model_path)
-    console.print("[bold green]Iniciando proceso de predicción[/] "+model_path)
-    obj.modelPredicFuncion(sql_serverConfig,query,steps, model_path)
+        return model_path, model_metadata[name], category_metadata
 
 def retrainingModel(obj, sql_serverConfig, query, steps, model_path):
     console.print("[bold cyan] Ruta -> [/]"+model_path)
@@ -347,12 +442,14 @@ def retrainingModel(obj, sql_serverConfig, query, steps, model_path):
 
 
 def main(salir = False):
-
     while salir == False:
         console.clear()
         vseleccion = intro()
-        engine, vstrConnection, query =  prepareConection(vseleccion)
-        setMode(vseleccion,engine,vstrConnection,query)
+        if vseleccion != "Hacer Predicciones":
+            v_connection, vstrConnection =  prepareConection()
+            setMode(vseleccion,v_connection,vstrConnection)
+        else:
+            setMode(vseleccion)
         console.print("[bold cyan]\n¿Desea salir del programa?[/bold cyan]")
         keyboard1 = Prompt.ask("[bold cyan]Presione [bold red]S[/bold red] para salir o cualquier otra tecla para continuar[/bold cyan]")
         if keyboard1 == "S" or keyboard1=="s":

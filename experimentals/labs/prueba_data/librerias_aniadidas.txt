@@ -1,0 +1,4 @@
+Se presentan las siguientes librerías, cuales, podrán luego pensar si eliminarse o no
+pip install skforecast
+pip install skforecast[plotting]
+pip install plyotly
